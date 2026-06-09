@@ -1,0 +1,77 @@
+{
+  "mode": "sweep",
+  "knee_bandwidth_gbps": 50.0,
+  "knee_reason": "latency_gain_flattened",
+  "rows": [
+    {
+      "total_samples": 343396,
+      "total_latency_s": 11753.677965635075,
+      "data_tx_latency_s": 443.5466225186665,
+      "inter_stage_latency_s": 1451.7616739874663,
+      "stage1_compute_latency_s": 8584.9,
+      "stage2_compute_latency_s": 8584.9,
+      "effective_compute_flops": 1460802316534480.8,
+      "effective_compute_pflops": 1.4608023165344808,
+      "ideal_peak_pflops": 4.0,
+      "compute_utilization": 0.3652005791336202,
+      "bottleneck_stage": "bigstar1_stage",
+      "link_bandwidth_gbps": 10.0
+    },
+    {
+      "total_samples": 343396,
+      "total_latency_s": 10601.431185894917,
+      "data_tx_latency_s": 97.87289058650646,
+      "inter_stage_latency_s": 299.5159008802665,
+      "stage1_compute_latency_s": 8584.9,
+      "stage2_compute_latency_s": 8584.9,
+      "effective_compute_flops": 1619573781966742.8,
+      "effective_compute_pflops": 1.6195737819667428,
+      "ideal_peak_pflops": 4.0,
+      "compute_utilization": 0.4048934454916857,
+      "bottleneck_stage": "bigstar1_stage",
+      "link_bandwidth_gbps": 50.0
+    },
+    {
+      "total_samples": 343396,
+      "total_latency_s": 10457.400338427396,
+      "data_tx_latency_s": 54.66367409498646,
+      "inter_stage_latency_s": 155.48517924186646,
+      "stage1_compute_latency_s": 8584.9,
+      "stage2_compute_latency_s": 8584.9,
+      "effective_compute_flops": 1641880337784029.8,
+      "effective_compute_pflops": 1.6418803377840296,
+      "ideal_peak_pflops": 4.0,
+      "compute_utilization": 0.4104700844460074,
+      "bottleneck_stage": "bigstar1_stage",
+      "link_bandwidth_gbps": 100.0
+    },
+    {
+      "total_samples": 343396,
+      "total_latency_s": 10385.384914693635,
+      "data_tx_latency_s": 33.059065849226464,
+      "inter_stage_latency_s": 83.46981842266646,
+      "stage1_compute_latency_s": 8584.9,
+      "stage2_compute_latency_s": 8584.9,
+      "effective_compute_flops": 1653265636375934.2,
+      "effective_compute_pflops": 1.6532656363759342,
+      "ideal_peak_pflops": 4.0,
+      "compute_utilization": 0.41331640909398354,
+      "bottleneck_stage": "bigstar1_stage",
+      "link_bandwidth_gbps": 200.0
+    },
+    {
+      "total_samples": 343396,
+      "total_latency_s": 10349.377202826758,
+      "data_tx_latency_s": 22.25676172634646,
+      "inter_stage_latency_s": 47.462138013066465,
+      "stage1_compute_latency_s": 8584.9,
+      "stage2_compute_latency_s": 8584.9,
+      "effective_compute_flops": 1659017703530059.8,
+      "effective_compute_pflops": 1.6590177035300597,
+      "ideal_peak_pflops": 4.0,
+      "compute_utilization": 0.41475442588251493,
+      "bottleneck_stage": "bigstar1_stage",
+      "link_bandwidth_gbps": 400.0
+    }
+  ]
+}

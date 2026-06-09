@@ -1,0 +1,2904 @@
+Reading prompt from stdin...
+OpenAI Codex v0.135.0
+--------
+workdir: /share/guolidong-nfs/SeeSpace/SCSP-Viz
+model: gpt-5.5
+provider: openai
+approval: never
+sandbox: danger-full-access
+reasoning effort: medium
+reasoning summaries: none
+session id: 019eabd3-9343-7d91-adf5-473827705448
+--------
+user
+# Round 0 任务
+
+## 强制执行规则
+你必须遵守 pbr-codex-builder skill。若未加载该 skill，也必须遵守：
+1. 你是唯一 Builder，只写代码。
+2. 不做 review 判断。
+3. 不执行任何 git 命令。
+4. 完成后必须写入指定 summary 文件：/share/guolidong-nfs/SeeSpace/SCSP-Viz/tasks/extract-viz-v1/impl/round-0-summary.md
+
+## 重要限制
+- 不要执行 git 命令（git add / git commit / git push 等）。如果你需要重命名文件，请直接创建新文件并写入内容，然后删除旧文件。
+- 所有文件操作通过 Hermes 工具完成，不直接输出代码到对话中。
+- 每次修改文件后，检查是否有 include 路径、import 路径或其他引用需要同步更新。
+- 修改前先在相关文件中搜索所有引用，确认修改的安全性。
+- 不要修改 SCSP_v0 原仓库的任何文件。
+- 项目目录已重命名为 SCSP-Viz（带连字符）。
+
+## 项目目标
+构建独立项目 `SCSP-Viz`（星座智算可视化分析软件 V1.0），从 SCSP_v0 提取可视化交付层。不执行实际仿真计算，通过 Mock 数据层保证前端展示。
+
+## 工程步骤
+
+### Step 1：复制基础文件
+从 `/share/guolidong-nfs/SeeSpace/SCSP_v0/` 复制以下文件到 `/share/guolidong-nfs/SeeSpace/SCSP-Viz/` 的对应位置（保持目录结构）：
+
+复制到 `scsp_viz/` 目录下（注意包名改为 scsp_viz）：
+- `scsp/__init__.py` → `scsp_viz/__init__.py`
+- `scsp/web_api.py` → `scsp_viz/web_api.py`
+- `scsp/experiment.py` → `scsp_viz/experiment.py`
+- `scsp/visualization.py` → `scsp_viz/visualization.py`
+- `scsp/config.py` → `scsp_viz/config.py`
+- `scsp/io_utils.py` → `scsp_viz/io_utils.py`
+- `scsp/models.py` → `scsp_viz/models.py`
+
+复制到根目录：
+- `run_web.py` → `run_web.py`
+- `web/index.html` → `web/index.html`
+- `assets/earth-horizon-reference.png` → `assets/earth-horizon-reference.png`
+- `configs/model_registry.json` → `configs/model_registry.json`
+
+同时复制 `experiments/records.jsonl` 和 `experiments/runs/` 下的一些示例数据到 `experiments/`。
+
+### Step 2：改造 import 路径
+将所有文件中的 `from scsp.` 改为 `from scsp_viz.`，将所有 `import scsp.` 改为 `import scsp_viz.`。
+
+### Step 3：移除仿真引擎耦合
+在 `scsp_viz/web_api.py` 中：
+- 删除 `from .engine import run_simulation, run_sweep`
+- 删除 `from .experiment import ... run_experiment` 中的真实运行引用（保留 ExperimentRecord 和 JsonlExperimentStore）
+- 在 API 处理函数中，将 `run_simulation`、`run_sweep`、`run_experiment`、`reproduce_experiment` 的调用替换为 Mock 数据生成器
+
+在 `scsp_viz/experiment.py` 中：
+- 删除 `from .engine import run_simulation, run_sweep, validate_bandwidth_input`
+- 删除 `from .io_utils import write_json`
+- 将 `run_experiment` 中的真实仿真调用替换为 Mock 数据生成
+- 保留 `JsonlExperimentStore`、`ExperimentRecord`、`apply_experiment_template`、`compare_result_summary`、`reproduce_experiment` 的接口签名，但内部用 Mock 数据填充
+
+创建 `scsp_viz/mock_engine.py`：
+- 提供 `mock_run_simulation(config, bandwidth_gbps)` 和 `mock_run_sweep(config, bandwidths_gbps)` 函数
+- 返回与 v0 真实仿真结果结构完全一致的 Mock 数据（参考 v0 中 `engine.py` 的返回值结构）
+- 单点仿真返回：`{"mode": "single", "config": ..., "metrics": {...}}`
+- 扫描仿真返回：`{"mode": "sweep", "knee_bandwidth_gbps": ..., "knee_reason": ..., "rows": [...]}`
+- Mock metrics 需包含 v0 `SimulationMetrics` 的所有字段（参考 v0 `models.py` 中的 dataclass）
+
+### Step 4：保留配置校验层
+`scsp_viz/config.py`：
+- 保留 `V1SimulationConfig`、`normalize_raw_config`、`validate_raw_config`、`dump_config_dict`
+- 删除与仿真计算强耦合的默认值推导（如从 model_registry 推导模型参数等），改为直接硬编码合理的默认值
+- 保留 `build_simulation_config` 的签名，用于前端配置展示和校验
+
+### Step 5：改造可视化模块
+`scsp_viz/visualization.py`：
+- 保留 `plot_sweep_latency` 函数
+- 输入改为从实验结果文件（CSV 或 JSON）读取，而非直接调用引擎
+- 确保函数签名与 v0 兼容
+
+### Step 6：更新启动脚本
+`run_web.py`：
+- 将 `uvicorn.run("scsp.web_api:app", ...)` 改为 `uvicorn.run("scsp_viz.web_api:app", ...)`
+
+### Step 7：创建 requirements.txt
+包含：
+```
+fastapi
+uvicorn
+pydantic
+matplotlib
+```
+
+### Step 8：创建 tests/
+创建 `tests/test_web_api.py` 和 `tests/test_experiment.py`，至少包含对 Mock API 的调用测试，确保返回结构正确。
+
+### Step 9：编写 README.md
+中文，包含：
+- 项目简介：SCSP-Viz 星座智算可视化分析软件 V1.0
+- 功能特性（≥6项）
+- 目录结构说明
+- 安装依赖步骤
+- 启动方式：`python run_web.py`
+- 接口说明（与 SCSP 仿真平台的标准化 REST API 交互规范）
+- 前端页面说明
+- 许可证声明
+
+### Step 10：验证可运行
+在终端中执行 `cd /share/guolidong-nfs/SeeSpace/SCSP-Viz && uvicorn scsp_viz.web_api:app --host 0.0.0.0 --port 8000 &` 或类似命令验证 FastAPI 可正常启动无报错（启动后立即停止即可，不需要保持运行）。
+
+## Mock 数据结构要求
+单点仿真 metrics 必须包含以下字段（与 v0 一致）：
+```
+total_samples, total_latency_s, data_tx_latency_s, inter_stage_latency_s,
+stage1_compute_latency_s, stage2_compute_latency_s, effective_compute_flops,
+effective_compute_pflops, ideal_peak_pflops, compute_utilization, bottleneck_stage,
+decode_latency_s_per_token, decode_total_latency_s, decode_compute_latency_s_per_token,
+decode_memory_latency_s_per_token, decode_effective_compute_pflops, decode_bottleneck,
+prefill_compute_time_s, prefill_memory_time_s, prefill_time_s, prefill_bottleneck,
+decode_energy_efficiency_tokens_per_j, total_inference_time_s,
+prefill_peak_memory_bytes, prefill_peak_memory_gb, single_star_peak_memory_bytes,
+single_star_peak_memory_gb, prefill_weight_memory_bytes, prefill_kv_memory_bytes,
+prefill_activation_peak_memory_bytes, prefill_workspace_memory_bytes
+```
+
+扫描仿真 rows 数组每项需包含：`link_bandwidth_gbps`, `total_latency_s`, `effective_compute_pflops`, `bottleneck_stage`, `decode_latency_s_per_token`, `decode_total_latency_s`, `decode_effective_compute_pflops`, `decode_energy_efficiency_tokens_per_j`, `decode_bottleneck`
+
+## 本轮需完成的工作
+完成以上所有步骤，确保项目可独立运行、前端可展示、API 返回 Mock 数据。
+
+## 修复说明写入路径
+完成后将 summary 写入：/share/guolidong-nfs/SeeSpace/SCSP-Viz/tasks/extract-viz-v1/impl/round-0-summary.md
+
+summary 必须包含以下章节：
+- 本轮实现内容
+- AC 推进情况
+- 遗留问题
+- Goal Tracker 更新请求
+- Lesson Delta
+
+codex
+未发现可加载的 `pbr-codex-builder` skill；我会按你在任务里给出的强制规则执行：只做实现、不做 review、不执行 git 命令，并在结束时写入指定 summary。当前环境没有名为 Hermes 的文件工具，我会使用可用的本地文件工具完成复制和修改。
+exec
+/bin/bash -lc 'pwd && rg --files /share/guolidong-nfs/SeeSpace/SCSP-Viz | head -120' in /share/guolidong-nfs/SeeSpace/SCSP-Viz
+ succeeded in 0ms:
+/share/guolidong-nfs/SeeSpace/SCSP-Viz
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/run_web.py
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/requirements.txt
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/README.md
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/__pycache__/run_web.cpython-310.pyc
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/experiments/records.jsonl
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/assets/earth-horizon-reference.png
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/tests/test_experiment.py
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/tests/test_web_api.py
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/configs/model_registry.json
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/web/index.html
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/tests/__pycache__/test_web_api.cpython-312-pytest-9.0.3.pyc
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/tests/__pycache__/test_experiment.cpython-312-pytest-9.0.3.pyc
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/tests/__pycache__/test_experiment.cpython-310.pyc
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/tests/__pycache__/test_web_api.cpython-310.pyc
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/scsp_viz/io_utils.py
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/scsp_viz/experiment.py
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/scsp_viz/config.py
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/scsp_viz/__init__.py
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/scsp_viz/models.py
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/scsp_viz/mock_engine.py
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/scsp_viz/visualization.py
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/scsp_viz/web_api.py
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/experiments/runs/60222206-59b7-487e-90f4-3bfde33d5ba4/result_sweep.json
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/experiments/runs/60222206-59b7-487e-90f4-3bfde33d5ba4/result_sweep.csv
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/experiments/runs/60222206-59b7-487e-90f4-3bfde33d5ba4/input_config.json
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/experiments/runs/99c67754-a189-4781-94a4-19eedef915ec/result_sweep.json
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/experiments/runs/99c67754-a189-4781-94a4-19eedef915ec/result_sweep.csv
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/experiments/runs/99c67754-a189-4781-94a4-19eedef915ec/input_config.json
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/scsp_viz/__pycache__/io_utils.cpython-310.pyc
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/scsp_viz/__pycache__/config.cpython-310.pyc
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/scsp_viz/__pycache__/__init__.cpython-310.pyc
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/experiments/runs/41fa83bd-b32a-4daa-ab61-cf1aac702698/input_config.json
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/experiments/runs/41fa83bd-b32a-4daa-ab61-cf1aac702698/result_sweep.csv
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/scsp_viz/__pycache__/models.cpython-312.pyc
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/scsp_viz/__pycache__/web_api.cpython-310.pyc
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/scsp_viz/__pycache__/config.cpython-312.pyc
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/scsp_viz/__pycache__/visualization.cpython-310.pyc
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/scsp_viz/__pycache__/mock_engine.cpython-312.pyc
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/scsp_viz/__pycache__/experiment.cpython-310.pyc
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/scsp_viz/__pycache__/experiment.cpython-312.pyc
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/scsp_viz/__pycache__/mock_engine.cpython-310.pyc
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/scsp_viz/__pycache__/web_api.cpython-312.pyc
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/experiments/runs/41fa83bd-b32a-4daa-ab61-cf1aac702698/result_sweep.json
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/scsp_viz/__pycache__/__init__.cpython-312.pyc
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/scsp_viz/__pycache__/models.cpython-310.pyc
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/tasks/extract-viz-v1/plan-quiz.md
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/tasks/extract-viz-v1/plan.md
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/tasks/extract-viz-v1/pbr-gate.sh
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/tasks/extract-viz-v1/pbr-state.json
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/experiments/runs/5329f9d5-87aa-4414-a3ed-a467876a50f9/result_sweep.csv
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/experiments/runs/5329f9d5-87aa-4414-a3ed-a467876a50f9/input_config.json
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/experiments/runs/5329f9d5-87aa-4414-a3ed-a467876a50f9/result_sweep.json
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/tasks/extract-viz-v1/impl/round-0-codex.pid
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/tasks/extract-viz-v1/impl/round-0-summary.md
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/tasks/extract-viz-v1/impl/round-0-codex-output.log
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/tasks/extract-viz-v1/impl/round-0-prompt.md
+
+exec
+/bin/bash -lc 'rg --files /share/guolidong-nfs/SeeSpace/SCSP_v0 | head -160' in /share/guolidong-nfs/SeeSpace/SCSP-Viz
+ succeeded in 0ms:
+/share/guolidong-nfs/SeeSpace/SCSP_v0/run_scsp.py
+/share/guolidong-nfs/SeeSpace/SCSP_v0/run_experiment.py
+/share/guolidong-nfs/SeeSpace/SCSP_v0/web/index.html
+/share/guolidong-nfs/SeeSpace/SCSP_v0/configs/model_registry.json
+/share/guolidong-nfs/SeeSpace/SCSP_v0/run_web.py
+/share/guolidong-nfs/SeeSpace/SCSP_v0/tests/test_model_registry.py
+/share/guolidong-nfs/SeeSpace/SCSP_v0/tests/test_web_api.py
+/share/guolidong-nfs/SeeSpace/SCSP_v0/tests/test_simulator_decode.py
+/share/guolidong-nfs/SeeSpace/SCSP_v0/tests/test_metrics.py
+/share/guolidong-nfs/SeeSpace/SCSP_v0/tests/test_experiment.py
+/share/guolidong-nfs/SeeSpace/SCSP_v0/tests/test_deployment.py
+/share/guolidong-nfs/SeeSpace/SCSP_v0/tests/test_communication.py
+/share/guolidong-nfs/SeeSpace/SCSP_v0/CLAUDE.md
+/share/guolidong-nfs/SeeSpace/SCSP_v0/README.md
+/share/guolidong-nfs/SeeSpace/SCSP_v0/assets/earth-horizon-reference.png
+/share/guolidong-nfs/SeeSpace/SCSP_v0/tests/__pycache__/test_model_registry.cpython-312.pyc
+/share/guolidong-nfs/SeeSpace/SCSP_v0/tests/__pycache__/test_web_api.cpython-310.pyc
+/share/guolidong-nfs/SeeSpace/SCSP_v0/tests/__pycache__/test_simulator_decode.cpython-310.pyc
+/share/guolidong-nfs/SeeSpace/SCSP_v0/tests/__pycache__/test_metrics.cpython-310.pyc
+/share/guolidong-nfs/SeeSpace/SCSP_v0/tests/__pycache__/test_memory_bound_model.cpython-310.pyc
+/share/guolidong-nfs/SeeSpace/SCSP_v0/tests/__pycache__/test_experiment.cpython-310.pyc
+/share/guolidong-nfs/SeeSpace/SCSP_v0/tests/__pycache__/test_deployment.cpython-310.pyc
+/share/guolidong-nfs/SeeSpace/SCSP_v0/tests/__pycache__/test_communication.cpython-310.pyc
+/share/guolidong-nfs/SeeSpace/SCSP_v0/experiments/records.jsonl
+/share/guolidong-nfs/SeeSpace/SCSP_v0/outputs/tmp_512/single.json
+/share/guolidong-nfs/SeeSpace/SCSP_v0/scsp/experiment.py
+/share/guolidong-nfs/SeeSpace/SCSP_v0/scsp/engine.py
+/share/guolidong-nfs/SeeSpace/SCSP_v0/scsp/deployment.py
+/share/guolidong-nfs/SeeSpace/SCSP_v0/scsp/config.py
+/share/guolidong-nfs/SeeSpace/SCSP_v0/scsp/communication.py
+/share/guolidong-nfs/SeeSpace/SCSP_v0/scsp/analysis.py
+/share/guolidong-nfs/SeeSpace/SCSP_v0/scsp/model_registry.py
+/share/guolidong-nfs/SeeSpace/SCSP_v0/scsp/web_api.py
+/share/guolidong-nfs/SeeSpace/SCSP_v0/scsp/visualization.py
+/share/guolidong-nfs/SeeSpace/SCSP_v0/scsp/task.py
+/share/guolidong-nfs/SeeSpace/SCSP_v0/scsp/simulator.py
+/share/guolidong-nfs/SeeSpace/SCSP_v0/scsp/pipeline.py
+/share/guolidong-nfs/SeeSpace/SCSP_v0/scsp/models.py
+/share/guolidong-nfs/SeeSpace/SCSP_v0/scsp/model.py
+/share/guolidong-nfs/SeeSpace/SCSP_v0/scsp/metrics.py
+/share/guolidong-nfs/SeeSpace/SCSP_v0/scsp/io_utils.py
+/share/guolidong-nfs/SeeSpace/SCSP_v0/scsp/__init__.py
+/share/guolidong-nfs/SeeSpace/SCSP_v0/scsp/__pycache__/model_registry.cpython-312.pyc
+/share/guolidong-nfs/SeeSpace/SCSP_v0/scsp/__pycache__/web_api.cpython-312.pyc
+/share/guolidong-nfs/SeeSpace/SCSP_v0/scsp/__pycache__/web_api.cpython-310.pyc
+/share/guolidong-nfs/SeeSpace/SCSP_v0/scsp/__pycache__/visualization.cpython-310.pyc
+/share/guolidong-nfs/SeeSpace/SCSP_v0/scsp/__pycache__/task.cpython-312.pyc
+/share/guolidong-nfs/SeeSpace/SCSP_v0/scsp/__pycache__/task.cpython-310.pyc
+/share/guolidong-nfs/SeeSpace/SCSP_v0/scsp/__pycache__/simulator.cpython-312.pyc
+/share/guolidong-nfs/SeeSpace/SCSP_v0/scsp/__pycache__/simulator.cpython-310.pyc
+/share/guolidong-nfs/SeeSpace/SCSP_v0/scsp/__pycache__/pipeline.cpython-312.pyc
+/share/guolidong-nfs/SeeSpace/SCSP_v0/scsp/__pycache__/pipeline.cpython-310.pyc
+/share/guolidong-nfs/SeeSpace/SCSP_v0/scsp/__pycache__/models.cpython-312.pyc
+/share/guolidong-nfs/SeeSpace/SCSP_v0/scsp/__pycache__/models.cpython-310.pyc
+/share/guolidong-nfs/SeeSpace/SCSP_v0/scsp/__pycache__/model.cpython-312.pyc
+/share/guolidong-nfs/SeeSpace/SCSP_v0/scsp/__pycache__/model.cpython-310.pyc
+/share/guolidong-nfs/SeeSpace/SCSP_v0/scsp/__pycache__/metrics.cpython-312.pyc
+/share/guolidong-nfs/SeeSpace/SCSP_v0/scsp/__pycache__/metrics.cpython-310.pyc
+/share/guolidong-nfs/SeeSpace/SCSP_v0/scsp/__pycache__/io_utils.cpython-312.pyc
+/share/guolidong-nfs/SeeSpace/SCSP_v0/scsp/__pycache__/io_utils.cpython-310.pyc
+/share/guolidong-nfs/SeeSpace/SCSP_v0/scsp/__pycache__/experiment.cpython-312.pyc
+/share/guolidong-nfs/SeeSpace/SCSP_v0/scsp/__pycache__/experiment.cpython-310.pyc
+/share/guolidong-nfs/SeeSpace/SCSP_v0/scsp/__pycache__/engine.cpython-312.pyc
+/share/guolidong-nfs/SeeSpace/SCSP_v0/scsp/__pycache__/engine.cpython-310.pyc
+/share/guolidong-nfs/SeeSpace/SCSP_v0/scsp/__pycache__/deployment.cpython-312.pyc
+/share/guolidong-nfs/SeeSpace/SCSP_v0/scsp/__pycache__/deployment.cpython-310.pyc
+/share/guolidong-nfs/SeeSpace/SCSP_v0/scsp/__pycache__/config.cpython-312.pyc
+/share/guolidong-nfs/SeeSpace/SCSP_v0/scsp/__pycache__/config.cpython-310.pyc
+/share/guolidong-nfs/SeeSpace/SCSP_v0/scsp/__pycache__/communication.cpython-312.pyc
+/share/guolidong-nfs/SeeSpace/SCSP_v0/scsp/__pycache__/communication.cpython-310.pyc
+/share/guolidong-nfs/SeeSpace/SCSP_v0/scsp/__pycache__/analysis.cpython-312.pyc
+/share/guolidong-nfs/SeeSpace/SCSP_v0/scsp/__pycache__/analysis.cpython-310.pyc
+/share/guolidong-nfs/SeeSpace/SCSP_v0/scsp/__pycache__/__init__.cpython-312.pyc
+/share/guolidong-nfs/SeeSpace/SCSP_v0/scsp/__pycache__/__init__.cpython-310.pyc
+/share/guolidong-nfs/SeeSpace/SCSP_v0/experiments/runs/fd2700b2-75d5-439a-95d5-5ff255ebdfaf/result_sweep.json
+/share/guolidong-nfs/SeeSpace/SCSP_v0/experiments/runs/fd2700b2-75d5-439a-95d5-5ff255ebdfaf/result_sweep.csv
+/share/guolidong-nfs/SeeSpace/SCSP_v0/experiments/runs/fd2700b2-75d5-439a-95d5-5ff255ebdfaf/input_config.json
+/share/guolidong-nfs/SeeSpace/SCSP_v0/experiments/runs/99c67754-a189-4781-94a4-19eedef915ec/result_sweep.json
+/share/guolidong-nfs/SeeSpace/SCSP_v0/experiments/runs/99c67754-a189-4781-94a4-19eedef915ec/result_sweep.csv
+/share/guolidong-nfs/SeeSpace/SCSP_v0/experiments/runs/99c67754-a189-4781-94a4-19eedef915ec/input_config.json
+/share/guolidong-nfs/SeeSpace/SCSP_v0/experiments/runs/daa09614-e7a6-4223-8c57-28210be87fea/result_sweep.json
+/share/guolidong-nfs/SeeSpace/SCSP_v0/experiments/runs/daa09614-e7a6-4223-8c57-28210be87fea/result_sweep.csv
+/share/guolidong-nfs/SeeSpace/SCSP_v0/experiments/runs/daa09614-e7a6-4223-8c57-28210be87fea/input_config.json
+/share/guolidong-nfs/SeeSpace/SCSP_v0/experiments/runs/60222206-59b7-487e-90f4-3bfde33d5ba4/result_sweep.json
+/share/guolidong-nfs/SeeSpace/SCSP_v0/experiments/runs/60222206-59b7-487e-90f4-3bfde33d5ba4/result_sweep.csv
+/share/guolidong-nfs/SeeSpace/SCSP_v0/experiments/runs/60222206-59b7-487e-90f4-3bfde33d5ba4/input_config.json
+/share/guolidong-nfs/SeeSpace/SCSP_v0/experiments/runs/d63ab8bf-7301-447f-92b8-66086b8dac81/result_sweep.json
+/share/guolidong-nfs/SeeSpace/SCSP_v0/experiments/runs/d63ab8bf-7301-447f-92b8-66086b8dac81/result_sweep.csv
+/share/guolidong-nfs/SeeSpace/SCSP_v0/experiments/runs/d63ab8bf-7301-447f-92b8-66086b8dac81/input_config.json
+/share/guolidong-nfs/SeeSpace/SCSP_v0/experiments/runs/5329f9d5-87aa-4414-a3ed-a467876a50f9/result_sweep.json
+/share/guolidong-nfs/SeeSpace/SCSP_v0/experiments/runs/5329f9d5-87aa-4414-a3ed-a467876a50f9/result_sweep.csv
+/share/guolidong-nfs/SeeSpace/SCSP_v0/experiments/runs/5329f9d5-87aa-4414-a3ed-a467876a50f9/input_config.json
+/share/guolidong-nfs/SeeSpace/SCSP_v0/experiments/runs/d4573350-5939-4c55-bb04-0e2a337e07b6/result_sweep.json
+/share/guolidong-nfs/SeeSpace/SCSP_v0/experiments/runs/d4573350-5939-4c55-bb04-0e2a337e07b6/result_sweep.csv
+/share/guolidong-nfs/SeeSpace/SCSP_v0/experiments/runs/d4573350-5939-4c55-bb04-0e2a337e07b6/input_config.json
+/share/guolidong-nfs/SeeSpace/SCSP_v0/experiments/runs/cebbcda4-7046-4f9f-91b3-4c8976160f42/result_sweep.json
+/share/guolidong-nfs/SeeSpace/SCSP_v0/experiments/runs/cebbcda4-7046-4f9f-91b3-4c8976160f42/result_sweep.csv
+/share/guolidong-nfs/SeeSpace/SCSP_v0/experiments/runs/cebbcda4-7046-4f9f-91b3-4c8976160f42/input_config.json
+/share/guolidong-nfs/SeeSpace/SCSP_v0/experiments/runs/41fa83bd-b32a-4daa-ab61-cf1aac702698/result_sweep.json
+/share/guolidong-nfs/SeeSpace/SCSP_v0/experiments/runs/41fa83bd-b32a-4daa-ab61-cf1aac702698/result_sweep.csv
+/share/guolidong-nfs/SeeSpace/SCSP_v0/experiments/runs/41fa83bd-b32a-4daa-ab61-cf1aac702698/input_config.json
+
+codex
+目标目录里已经存在一套 `scsp_viz`、测试、README 和 summary 文件。我先对现有实现做引用和耦合检查，再按任务要求补齐或修正，避免覆盖掉已经正确的工作。
+exec
+/bin/bash -lc "sed -n '1,240p' scsp_viz/models.py && sed -n '1,260p' scsp_viz/mock_engine.py" in /share/guolidong-nfs/SeeSpace/SCSP-Viz
+ succeeded in 0ms:
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class SimulationMetrics:
+    total_samples: int
+    total_latency_s: float
+    data_tx_latency_s: float
+    inter_stage_latency_s: float
+    stage1_compute_latency_s: float
+    stage2_compute_latency_s: float
+    effective_compute_flops: float
+    effective_compute_pflops: float
+    ideal_peak_pflops: float
+    compute_utilization: float
+    bottleneck_stage: str
+    decode_latency_s_per_token: float = 0.0
+    decode_total_latency_s: float = 0.0
+    decode_compute_latency_s_per_token: float = 0.0
+    decode_memory_latency_s_per_token: float = 0.0
+    decode_effective_compute_pflops: float = 0.0
+    decode_bottleneck: str = "unknown"
+    prefill_compute_time_s: float = 0.0
+    prefill_memory_time_s: float = 0.0
+    prefill_time_s: float = 0.0
+    prefill_bottleneck: str = "unknown"
+    decode_energy_efficiency_tokens_per_j: float = 0.0
+    total_inference_time_s: float = 0.0
+    prefill_peak_memory_bytes: float = 0.0
+    prefill_peak_memory_gb: float = 0.0
+    single_star_peak_memory_bytes: float = 0.0
+    single_star_peak_memory_gb: float = 0.0
+    prefill_weight_memory_bytes: float = 0.0
+    prefill_kv_memory_bytes: float = 0.0
+    prefill_activation_peak_memory_bytes: float = 0.0
+    prefill_workspace_memory_bytes: float = 0.0
+from __future__ import annotations
+
+from dataclasses import asdict
+from numbers import Integral
+from typing import Any, Dict, List
+
+from .config import build_simulation_config, dump_config_dict, normalize_raw_config
+from .models import SimulationMetrics
+
+
+def validate_bandwidth_input(value: Any) -> None:
+    if isinstance(value, Integral):
+        if value <= 0:
+            raise ValueError("link_bandwidth_gbps must be a positive integer")
+        return
+    if isinstance(value, list):
+        if not value:
+            raise ValueError("link_bandwidth_gbps list cannot be empty")
+        for item in value:
+            if not isinstance(item, Integral):
+                raise TypeError("link_bandwidth_gbps list items must be integers")
+            if item <= 0:
+                raise ValueError("link_bandwidth_gbps list items must be positive integers")
+        return
+    raise TypeError("link_bandwidth_gbps must be an integer or a list of integers")
+
+
+def _mock_metrics(config: Dict[str, Any], bandwidth_gbps: float) -> Dict[str, Any]:
+    cfg = build_simulation_config(config, bandwidth_gbps)
+    width, height = cfg.image_wh
+    tile_w, tile_h = cfg.tile_wh
+    pixels = width * height * max(cfg.num_images, 1)
+    tile_pixels = max(tile_w * tile_h, 1)
+    total_samples = max(1, int((pixels + tile_pixels - 1) // tile_pixels))
+    bandwidth_factor = max(float(bandwidth_gbps), 1.0)
+    compute_scale = max(cfg.big_star_peak_pflops * cfg.prefill_compute_utilization, 0.1)
+
+    data_tx_latency_s = round((pixels * cfg.channels * cfg.bytes_per_pixel * 8) / (bandwidth_factor * 1e9), 6)
+    inter_stage_latency_s = round(
+        (cfg.prefill_inter_stage_transfer_mb * 8e6 + cfg.decode_inter_stage_transfer_kb * 8e3)
+        / (bandwidth_factor * 1e9)
+        + cfg.inter_sat_latency_target_ms / 1000.0,
+        6,
+    )
+    stage1_compute_latency_s = round(total_samples * cfg.flops_per_sample / (compute_scale * 1e15), 6)
+    stage2_compute_latency_s = round(stage1_compute_latency_s * (1.0 - cfg.stage_split_ratio + 0.5), 6)
+    prefill_compute_time_s = round(stage1_compute_latency_s + stage2_compute_latency_s, 6)
+    prefill_memory_time_s = round(total_samples * cfg.prefill_memory_bytes_per_patch / cfg.single_node_memory_bandwidth_bytes_per_sec, 6)
+    prefill_time_s = round(max(prefill_compute_time_s, prefill_memory_time_s) + inter_stage_latency_s, 6)
+    decode_compute_latency_s_per_token = round(
+        cfg.decode_flops_per_token / max(cfg.big_star_peak_pflops * cfg.decode_compute_utilization * 1e15, 1.0),
+        6,
+    )
+    decode_memory_latency_s_per_token = round(
+        cfg.decode_memory_bytes_per_token / max(cfg.single_node_memory_bandwidth_bytes_per_sec * cfg.decode_memory_utilization, 1.0),
+        6,
+    )
+    decode_latency_s_per_token = round(
+        max(decode_compute_latency_s_per_token, decode_memory_latency_s_per_token)
+        + cfg.decode_inter_stage_transfer_kb * 8e3 / (bandwidth_factor * 1e9),
+        6,
+    )
+    decode_total_latency_s = round(decode_latency_s_per_token * cfg.decode_tokens, 6)
+    total_latency_s = round(data_tx_latency_s + prefill_time_s + decode_total_latency_s, 6)
+    effective_compute_flops = cfg.flops_per_sample * total_samples / max(total_latency_s, 1e-9)
+    effective_compute_pflops = round(effective_compute_flops / 1e15, 6)
+    decode_effective_compute_pflops = round(
+        cfg.decode_flops_per_token / max(decode_latency_s_per_token, 1e-9) / 1e15,
+        6,
+    )
+    ideal_peak_pflops = cfg.big_star_peak_pflops
+    compute_utilization = round(min(effective_compute_pflops / max(ideal_peak_pflops, 1e-9), 1.0), 6)
+    prefill_weight_memory_bytes = cfg.resident_parameter_count * cfg.bytes_per_pixel
+    prefill_kv_memory_bytes = cfg.decode_tokens * cfg.llm_num_hidden_layers * cfg.llm_hidden_size * 2 * cfg.bytes_per_pixel
+    prefill_activation_peak_memory_bytes = pixels * cfg.channels * cfg.bytes_per_pixel * 4
+    prefill_workspace_memory_bytes = total_samples * cfg.prefill_memory_bytes_per_patch * 0.05
+    prefill_peak_memory_bytes = (
+        prefill_weight_memory_bytes
+        + prefill_kv_memory_bytes
+        + prefill_activation_peak_memory_bytes
+        + prefill_workspace_memory_bytes
+    )
+    single_star_peak_memory_bytes = min(prefill_peak_memory_bytes, cfg.peak_vram_gb * 1e9)
+
+    metrics = SimulationMetrics(
+        total_samples=total_samples,
+        total_latency_s=total_latency_s,
+        data_tx_latency_s=data_tx_latency_s,
+        inter_stage_latency_s=inter_stage_latency_s,
+        stage1_compute_latency_s=stage1_compute_latency_s,
+        stage2_compute_latency_s=stage2_compute_latency_s,
+        effective_compute_flops=effective_compute_flops,
+        effective_compute_pflops=effective_compute_pflops,
+        ideal_peak_pflops=ideal_peak_pflops,
+        compute_utilization=compute_utilization,
+        bottleneck_stage="communication" if data_tx_latency_s + inter_stage_latency_s > prefill_compute_time_s else "compute",
+        decode_latency_s_per_token=decode_latency_s_per_token,
+        decode_total_latency_s=decode_total_latency_s,
+        decode_compute_latency_s_per_token=decode_compute_latency_s_per_token,
+        decode_memory_latency_s_per_token=decode_memory_latency_s_per_token,
+        decode_effective_compute_pflops=decode_effective_compute_pflops,
+        decode_bottleneck="memory" if decode_memory_latency_s_per_token > decode_compute_latency_s_per_token else "compute",
+        prefill_compute_time_s=prefill_compute_time_s,
+        prefill_memory_time_s=prefill_memory_time_s,
+        prefill_time_s=prefill_time_s,
+        prefill_bottleneck="memory" if prefill_memory_time_s > prefill_compute_time_s else "compute",
+        decode_energy_efficiency_tokens_per_j=round(1.0 / max(cfg.single_star_compute_payload_power_w * decode_latency_s_per_token, 1e-9), 9),
+        total_inference_time_s=total_latency_s,
+        prefill_peak_memory_bytes=prefill_peak_memory_bytes,
+        prefill_peak_memory_gb=round(prefill_peak_memory_bytes / 1e9, 6),
+        single_star_peak_memory_bytes=single_star_peak_memory_bytes,
+        single_star_peak_memory_gb=round(single_star_peak_memory_bytes / 1e9, 6),
+        prefill_weight_memory_bytes=prefill_weight_memory_bytes,
+        prefill_kv_memory_bytes=prefill_kv_memory_bytes,
+        prefill_activation_peak_memory_bytes=prefill_activation_peak_memory_bytes,
+        prefill_workspace_memory_bytes=prefill_workspace_memory_bytes,
+    )
+    return asdict(metrics)
+
+
+def mock_run_simulation(config: Dict[str, Any], bandwidth_gbps: int | None = None) -> Dict[str, Any]:
+    normalized = normalize_raw_config(config)
+    raw_bw = normalized["link_bandwidth_gbps"]
+    if bandwidth_gbps is None and isinstance(raw_bw, list):
+        bw = int(raw_bw[0])
+    else:
+        bw = int(raw_bw) if bandwidth_gbps is None else int(bandwidth_gbps)
+    validate_bandwidth_input(bw)
+    cfg = build_simulation_config(normalized, bw)
+    return {
+        "mode": "single",
+        "config": dump_config_dict(cfg),
+        "metrics": _mock_metrics(normalized, bw),
+    }
+
+
+def mock_run_sweep(config: Dict[str, Any], bandwidths_gbps: List[int] | None = None) -> Dict[str, Any]:
+    normalized = normalize_raw_config(config)
+    if bandwidths_gbps is None:
+        raw_bw = normalized.get("link_bandwidth_gbps", [10, 50, 100, 200, 400])
+        bandwidths_gbps = [int(v) for v in raw_bw] if isinstance(raw_bw, list) else [int(raw_bw)]
+    validate_bandwidth_input(bandwidths_gbps)
+    rows = []
+    for bw in bandwidths_gbps:
+        metrics = _mock_metrics(normalized, float(bw))
+        rows.append(
+            {
+                "link_bandwidth_gbps": int(bw),
+                "total_latency_s": metrics["total_latency_s"],
+                "effective_compute_pflops": metrics["effective_compute_pflops"],
+                "bottleneck_stage": metrics["bottleneck_stage"],
+                "decode_latency_s_per_token": metrics["decode_latency_s_per_token"],
+                "decode_total_latency_s": metrics["decode_total_latency_s"],
+                "decode_effective_compute_pflops": metrics["decode_effective_compute_pflops"],
+                "decode_energy_efficiency_tokens_per_j": metrics["decode_energy_efficiency_tokens_per_j"],
+                "decode_bottleneck": metrics["decode_bottleneck"],
+            }
+        )
+    sorted_rows = sorted(rows, key=lambda row: row["link_bandwidth_gbps"])
+    knee = sorted_rows[-1]["link_bandwidth_gbps"] if sorted_rows else None
+    for prev, cur in zip(sorted_rows, sorted_rows[1:]):
+        improvement = prev["total_latency_s"] - cur["total_latency_s"]
+        if prev["total_latency_s"] and improvement / prev["total_latency_s"] < 0.05:
+            knee = cur["link_bandwidth_gbps"]
+            break
+    return {
+        "mode": "sweep",
+        "knee_bandwidth_gbps": knee,
+        "knee_reason": "mock latency improvement below 5% threshold",
+        "rows": sorted_rows,
+    }
+
+exec
+/bin/bash -lc "sed -n '1,280p' scsp_viz/experiment.py" in /share/guolidong-nfs/SeeSpace/SCSP-Viz
+ succeeded in 0ms:
+from __future__ import annotations
+
+import csv
+import json
+import uuid
+from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Dict, List, Literal, Optional
+
+from .mock_engine import mock_run_simulation, mock_run_sweep, validate_bandwidth_input
+
+ENGINE_VERSION = "viz-mock-v1"
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+@dataclass
+class ExperimentRecord:
+    experiment_id: str
+    experiment_name: str
+    template_name: Optional[str]
+    mode: Literal["single", "sweep"]
+    status: Literal["success", "failed"]
+    created_at: str
+    finished_at: str
+    engine_version: str
+    input_config: Dict[str, Any]
+    output_files: List[str]
+    result_summary: Dict[str, Any]
+    error_message: Optional[str] = None
+
+
+class JsonlExperimentStore:
+    def __init__(self, store_path: str | Path) -> None:
+        self.store_path = Path(store_path)
+        self.store_path.parent.mkdir(parents=True, exist_ok=True)
+        if not self.store_path.exists():
+            self.store_path.write_text("", encoding="utf-8")
+
+    def append(self, record: ExperimentRecord) -> None:
+        with self.store_path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(asdict(record), ensure_ascii=False) + "\n")
+
+    def list_records(self) -> List[Dict[str, Any]]:
+        records: List[Dict[str, Any]] = []
+        with self.store_path.open("r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                records.append(json.loads(line))
+        return records
+
+    def get(self, experiment_id: str) -> Dict[str, Any]:
+        for record in self.list_records():
+            if record["experiment_id"] == experiment_id:
+                return record
+        raise KeyError(f"Experiment not found: {experiment_id}")
+
+
+def apply_experiment_template(raw_config: Dict[str, Any], template_name: str | None) -> Dict[str, Any]:
+    config = dict(raw_config)
+    if template_name is None:
+        return config
+    if template_name == "single_point":
+        bw = config.get("link_bandwidth_gbps_single", config.get("link_bandwidth_gbps", 100))
+        if isinstance(bw, list):
+            config["link_bandwidth_gbps"] = int(bw[0])
+        else:
+            config["link_bandwidth_gbps"] = int(bw)
+        return config
+    if template_name == "bandwidth_sensitivity":
+        bw = config.get(
+            "link_bandwidth_gbps_sweep",
+            config.get("link_bandwidth_gbps", [10, 50, 100, 200, 400]),
+        )
+        if isinstance(bw, int):
+            config["link_bandwidth_gbps"] = [bw]
+        else:
+            config["link_bandwidth_gbps"] = [int(v) for v in bw]
+        return config
+    raise ValueError(f"Unknown template_name: {template_name}")
+
+
+def _write_rows_csv(path: str | Path, rows: List[Dict[str, Any]]) -> None:
+    if not rows:
+        return
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    with p.open("w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def _write_json(path: str | Path, data: Dict[str, Any]) -> None:
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _result_summary(payload: Dict[str, Any]) -> Dict[str, Any]:
+    if payload["mode"] == "single":
+        metrics = payload["metrics"]
+        return {
+            "total_latency_s": metrics["total_latency_s"],
+            "effective_compute_pflops": metrics["effective_compute_pflops"],
+            "bottleneck_stage": metrics["bottleneck_stage"],
+            "prefill_peak_memory_gb": metrics.get("prefill_peak_memory_gb"),
+            "single_star_peak_memory_gb": metrics.get("single_star_peak_memory_gb"),
+            "decode_latency_s_per_token": metrics.get("decode_latency_s_per_token"),
+            "decode_total_latency_s": metrics.get("decode_total_latency_s"),
+            "decode_effective_compute_pflops": metrics.get("decode_effective_compute_pflops"),
+            "decode_energy_efficiency_tokens_per_j": metrics.get("decode_energy_efficiency_tokens_per_j"),
+            "decode_bottleneck": metrics.get("decode_bottleneck"),
+        }
+    rows = payload["rows"]
+    best_row = min(rows, key=lambda x: x["total_latency_s"]) if rows else {}
+    return {
+        "knee_bandwidth_gbps": payload.get("knee_bandwidth_gbps"),
+        "best_latency_s": best_row.get("total_latency_s"),
+        "best_bandwidth_gbps": best_row.get("link_bandwidth_gbps"),
+        "best_decode_latency_s_per_token": best_row.get("decode_latency_s_per_token"),
+        "best_decode_total_latency_s": best_row.get("decode_total_latency_s"),
+        "best_decode_effective_compute_pflops": best_row.get("decode_effective_compute_pflops"),
+        "best_decode_energy_efficiency_tokens_per_j": best_row.get("decode_energy_efficiency_tokens_per_j"),
+        "best_decode_bottleneck": best_row.get("decode_bottleneck"),
+    }
+
+
+def run_experiment(
+    raw_config: Dict[str, Any],
+    output_root: str | Path,
+    store_path: str | Path,
+    experiment_name: str | None = None,
+    template_name: str | None = None,
+) -> Dict[str, Any]:
+    exp_id = str(uuid.uuid4())
+    created_at = _now_iso()
+    output_dir = Path(output_root) / exp_id
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    config = apply_experiment_template(raw_config, template_name)
+    validate_bandwidth_input(config["link_bandwidth_gbps"])
+    input_path = output_dir / "input_config.json"
+    _write_json(input_path, config)
+
+    try:
+        bw = config["link_bandwidth_gbps"]
+        if isinstance(bw, int):
+            payload = mock_run_simulation(config, bandwidth_gbps=bw)
+            result_json = output_dir / "result_single.json"
+            _write_json(result_json, payload)
+            output_files = [str(input_path), str(result_json)]
+        else:
+            payload = mock_run_sweep(config, bandwidths_gbps=[int(v) for v in bw])
+            result_json = output_dir / "result_sweep.json"
+            result_csv = output_dir / "result_sweep.csv"
+            _write_json(result_json, payload)
+            _write_rows_csv(result_csv, payload["rows"])
+            output_files = [str(input_path), str(result_json), str(result_csv)]
+
+        record = ExperimentRecord(
+            experiment_id=exp_id,
+            experiment_name=experiment_name or f"experiment-{exp_id[:8]}",
+            template_name=template_name,
+            mode=payload["mode"],
+            status="success",
+            created_at=created_at,
+            finished_at=_now_iso(),
+            engine_version=ENGINE_VERSION,
+            input_config=config,
+            output_files=output_files,
+            result_summary=_result_summary(payload),
+        )
+    except Exception as exc:  # pragma: no cover - defensive path
+        record = ExperimentRecord(
+            experiment_id=exp_id,
+            experiment_name=experiment_name or f"experiment-{exp_id[:8]}",
+            template_name=template_name,
+            mode="single",
+            status="failed",
+            created_at=created_at,
+            finished_at=_now_iso(),
+            engine_version=ENGINE_VERSION,
+            input_config=config,
+            output_files=[str(input_path)],
+            result_summary={},
+            error_message=str(exc),
+        )
+        JsonlExperimentStore(store_path).append(record)
+        raise
+
+    JsonlExperimentStore(store_path).append(record)
+    return {
+        "record": asdict(record),
+        "payload": payload,
+    }
+
+
+def run_batch_experiments(
+    raw_configs: List[Dict[str, Any]],
+    output_root: str | Path,
+    store_path: str | Path,
+    template_name: str | None = None,
+) -> List[Dict[str, Any]]:
+    results: List[Dict[str, Any]] = []
+    for idx, raw_config in enumerate(raw_configs):
+        results.append(
+            run_experiment(
+                raw_config=raw_config,
+                output_root=output_root,
+                store_path=store_path,
+                experiment_name=f"batch-{idx + 1}",
+                template_name=template_name,
+            )
+        )
+    return results
+
+
+def compare_result_summary(base: Dict[str, Any], candidate: Dict[str, Any]) -> Dict[str, Any]:
+    diff: Dict[str, Any] = {}
+    shared_keys = sorted(set(base.keys()) & set(candidate.keys()))
+    for key in shared_keys:
+        b = base[key]
+        c = candidate[key]
+        if isinstance(b, (int, float)) and isinstance(c, (int, float)):
+            if b != 0:
+                diff[key] = {
+                    "base": b,
+                    "candidate": c,
+                    "delta": c - b,
+                    "relative_delta": (c - b) / b,
+                }
+            else:
+                diff[key] = {"base": b, "candidate": c, "delta": c - b}
+        elif b != c:
+            diff[key] = {"base": b, "candidate": c}
+    return diff
+
+
+def reproduce_experiment(
+    experiment_id: str,
+    output_root: str | Path,
+    store_path: str | Path,
+) -> Dict[str, Any]:
+    store = JsonlExperimentStore(store_path)
+    old_record = store.get(experiment_id)
+    rerun = run_experiment(
+        raw_config=old_record["input_config"],
+        output_root=output_root,
+        store_path=store_path,
+        experiment_name=f"reproduce-{experiment_id[:8]}",
+        template_name=old_record.get("template_name"),
+    )
+    comparison = compare_result_summary(old_record.get("result_summary", {}), rerun["record"]["result_summary"])
+    return {
+        "source_experiment_id": experiment_id,
+        "reproduced_experiment_id": rerun["record"]["experiment_id"],
+        "comparison": comparison,
+    }
+
+exec
+/bin/bash -lc "sed -n '1,260p' scsp_viz/web_api.py" in /share/guolidong-nfs/SeeSpace/SCSP-Viz
+ succeeded in 0ms:
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any, Dict, List, Literal, Optional
+
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+
+from .experiment import JsonlExperimentStore, reproduce_experiment, run_experiment
+from .mock_engine import mock_run_simulation, mock_run_sweep
+
+DEFAULT_OUTPUT_ROOT = Path("experiments/runs")
+DEFAULT_STORE_PATH = Path("experiments/records.jsonl")
+
+
+class SingleSimulationRequest(BaseModel):
+    config: Dict[str, Any]
+    bandwidth_gbps: Optional[int] = None
+
+
+class SweepSimulationRequest(BaseModel):
+    config: Dict[str, Any]
+    bandwidths_gbps: Optional[List[int]] = None
+
+
+class RunExperimentRequest(BaseModel):
+    config: Dict[str, Any]
+    experiment_name: Optional[str] = None
+    template_name: Optional[Literal["single_point", "bandwidth_sensitivity"]] = None
+    output_root: Optional[str] = None
+    store_path: Optional[str] = None
+
+
+def create_app() -> FastAPI:
+    app = FastAPI(title="SCSP-Viz API", version="1.0")
+    web_root = Path(__file__).resolve().parents[1] / "web"
+    assets_root = Path(__file__).resolve().parents[1] / "assets"
+    configs_root = Path(__file__).resolve().parents[1] / "configs"
+    if web_root.exists():
+        app.mount("/web", StaticFiles(directory=str(web_root)), name="web")
+    if assets_root.exists():
+        app.mount("/assets", StaticFiles(directory=str(assets_root)), name="assets")
+    if configs_root.exists():
+        app.mount("/configs", StaticFiles(directory=str(configs_root)), name="configs")
+
+    @app.get("/api/health")
+    def health() -> Dict[str, str]:
+        return {"status": "ok"}
+
+    @app.post("/api/simulations/single")
+    def api_run_single(req: SingleSimulationRequest) -> Dict[str, Any]:
+        try:
+            return mock_run_simulation(req.config, bandwidth_gbps=req.bandwidth_gbps)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+    @app.post("/api/simulations/sweep")
+    def api_run_sweep(req: SweepSimulationRequest) -> Dict[str, Any]:
+        try:
+            return mock_run_sweep(req.config, bandwidths_gbps=req.bandwidths_gbps)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+    @app.post("/api/experiments/run")
+    def api_run_experiment(req: RunExperimentRequest) -> Dict[str, Any]:
+        output_root = req.output_root or str(DEFAULT_OUTPUT_ROOT)
+        store_path = req.store_path or str(DEFAULT_STORE_PATH)
+        try:
+            return run_experiment(
+                raw_config=req.config,
+                output_root=output_root,
+                store_path=store_path,
+                experiment_name=req.experiment_name,
+                template_name=req.template_name,
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+    @app.get("/api/experiments")
+    def api_list_experiments(store_path: Optional[str] = None) -> Dict[str, Any]:
+        path = store_path or str(DEFAULT_STORE_PATH)
+        store = JsonlExperimentStore(path)
+        records = store.list_records()
+        return {"count": len(records), "records": records}
+
+    @app.get("/api/experiments/{experiment_id}")
+    def api_get_experiment(experiment_id: str, store_path: Optional[str] = None) -> Dict[str, Any]:
+        path = store_path or str(DEFAULT_STORE_PATH)
+        store = JsonlExperimentStore(path)
+        try:
+            return store.get(experiment_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+
+    @app.post("/api/experiments/reproduce/{experiment_id}")
+    def api_reproduce_experiment(
+        experiment_id: str,
+        output_root: Optional[str] = None,
+        store_path: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        try:
+            return reproduce_experiment(
+                experiment_id=experiment_id,
+                output_root=output_root or str(DEFAULT_OUTPUT_ROOT),
+                store_path=store_path or str(DEFAULT_STORE_PATH),
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+    @app.get("/api/experiments/{experiment_id}/export")
+    def api_export_experiment(experiment_id: str, store_path: Optional[str] = None) -> Dict[str, Any]:
+        path = store_path or str(DEFAULT_STORE_PATH)
+        store = JsonlExperimentStore(path)
+        try:
+            record = store.get(experiment_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+        return {"experiment": record, "export_format": "json"}
+
+    @app.get("/")
+    def index() -> FileResponse:
+        index_path = web_root / "index.html"
+        if not index_path.exists():
+            raise HTTPException(status_code=404, detail="Frontend page not found")
+        return FileResponse(index_path)
+
+    return app
+
+
+app = create_app()
+
+exec
+/bin/bash -lc "rg -n \"from scsp\\.|import scsp\\.|\\.engine|run_simulation|run_sweep|run_experiment|reproduce_experiment|validate_bandwidth_input|write_json|uvicorn.run|scsp\\.web_api\" /share/guolidong-nfs/SeeSpace/SCSP-Viz" in /share/guolidong-nfs/SeeSpace/SCSP-Viz
+ succeeded in 0ms:
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/run_web.py:8:    uvicorn.run("scsp_viz.web_api:app", host="0.0.0.0", port=8000, reload=False)
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/scsp_viz/io_utils.py:13:def write_json(path: str | Path, data: Dict | List[Dict]) -> None:
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/scsp_viz/experiment.py:11:from .mock_engine import mock_run_simulation, mock_run_sweep, validate_bandwidth_input
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/scsp_viz/experiment.py:99:def _write_json(path: str | Path, data: Dict[str, Any]) -> None:
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/scsp_viz/experiment.py:134:def run_experiment(
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/scsp_viz/experiment.py:147:    validate_bandwidth_input(config["link_bandwidth_gbps"])
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/scsp_viz/experiment.py:149:    _write_json(input_path, config)
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/scsp_viz/experiment.py:154:            payload = mock_run_simulation(config, bandwidth_gbps=bw)
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/scsp_viz/experiment.py:156:            _write_json(result_json, payload)
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/scsp_viz/experiment.py:159:            payload = mock_run_sweep(config, bandwidths_gbps=[int(v) for v in bw])
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/scsp_viz/experiment.py:162:            _write_json(result_json, payload)
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/scsp_viz/experiment.py:213:            run_experiment(
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/scsp_viz/experiment.py:245:def reproduce_experiment(
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/scsp_viz/experiment.py:252:    rerun = run_experiment(
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/scsp_viz/mock_engine.py:11:def validate_bandwidth_input(value: Any) -> None:
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/scsp_viz/mock_engine.py:121:def mock_run_simulation(config: Dict[str, Any], bandwidth_gbps: int | None = None) -> Dict[str, Any]:
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/scsp_viz/mock_engine.py:128:    validate_bandwidth_input(bw)
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/scsp_viz/mock_engine.py:137:def mock_run_sweep(config: Dict[str, Any], bandwidths_gbps: List[int] | None = None) -> Dict[str, Any]:
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/scsp_viz/mock_engine.py:142:    validate_bandwidth_input(bandwidths_gbps)
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/tests/test_experiment.py:7:from scsp_viz.experiment import JsonlExperimentStore, reproduce_experiment, run_experiment
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/tests/test_experiment.py:29:            first = run_experiment(
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/tests/test_experiment.py:45:            repro = reproduce_experiment(
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/scsp_viz/web_api.py:11:from .experiment import JsonlExperimentStore, reproduce_experiment, run_experiment
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/scsp_viz/web_api.py:12:from .mock_engine import mock_run_simulation, mock_run_sweep
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/scsp_viz/web_api.py:55:            return mock_run_simulation(req.config, bandwidth_gbps=req.bandwidth_gbps)
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/scsp_viz/web_api.py:60:    def api_run_sweep(req: SweepSimulationRequest) -> Dict[str, Any]:
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/scsp_viz/web_api.py:62:            return mock_run_sweep(req.config, bandwidths_gbps=req.bandwidths_gbps)
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/scsp_viz/web_api.py:67:    def api_run_experiment(req: RunExperimentRequest) -> Dict[str, Any]:
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/scsp_viz/web_api.py:71:            return run_experiment(
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/scsp_viz/web_api.py:98:    def api_reproduce_experiment(
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/scsp_viz/web_api.py:104:            return reproduce_experiment(
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/tasks/extract-viz-v1/plan.md:47:- 所有真实仿真调用（`engine.run_simulation`、`engine.run_sweep`、`experiment.run_experiment` 中的实际 `run_simulation`）均需替换为 Mock 生成器，但保留原函数签名和接口文档
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/tasks/extract-viz-v1/impl/round-0-prompt.md:44:将所有文件中的 `from scsp.` 改为 `from scsp_viz.`，将所有 `import scsp.` 改为 `import scsp_viz.`。
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/tasks/extract-viz-v1/impl/round-0-prompt.md:48:- 删除 `from .engine import run_simulation, run_sweep`
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/tasks/extract-viz-v1/impl/round-0-prompt.md:49:- 删除 `from .experiment import ... run_experiment` 中的真实运行引用（保留 ExperimentRecord 和 JsonlExperimentStore）
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/tasks/extract-viz-v1/impl/round-0-prompt.md:50:- 在 API 处理函数中，将 `run_simulation`、`run_sweep`、`run_experiment`、`reproduce_experiment` 的调用替换为 Mock 数据生成器
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/tasks/extract-viz-v1/impl/round-0-prompt.md:53:- 删除 `from .engine import run_simulation, run_sweep, validate_bandwidth_input`
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/tasks/extract-viz-v1/impl/round-0-prompt.md:54:- 删除 `from .io_utils import write_json`
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/tasks/extract-viz-v1/impl/round-0-prompt.md:55:- 将 `run_experiment` 中的真实仿真调用替换为 Mock 数据生成
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/tasks/extract-viz-v1/impl/round-0-prompt.md:56:- 保留 `JsonlExperimentStore`、`ExperimentRecord`、`apply_experiment_template`、`compare_result_summary`、`reproduce_experiment` 的接口签名，但内部用 Mock 数据填充
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/tasks/extract-viz-v1/impl/round-0-prompt.md:59:- 提供 `mock_run_simulation(config, bandwidth_gbps)` 和 `mock_run_sweep(config, bandwidths_gbps)` 函数
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/tasks/extract-viz-v1/impl/round-0-prompt.md:79:- 将 `uvicorn.run("scsp.web_api:app", ...)` 改为 `uvicorn.run("scsp_viz.web_api:app", ...)`
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/tasks/extract-viz-v1/impl/round-0-summary.md:4:- `run_web.py` 已指向 `uvicorn.run("scsp_viz.web_api:app", ...)`。
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/tasks/extract-viz-v1/impl/round-0-summary.md:6:- `scsp_viz/experiment.py` 保留 `JsonlExperimentStore`、`ExperimentRecord`、`apply_experiment_template`、`compare_result_summary`、`reproduce_experiment` 等接口，实验运行写入 Mock JSON/CSV 结果。
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/tasks/extract-viz-v1/impl/round-0-summary.md:7:- 新增并完善 `scsp_viz/mock_engine.py`，提供 `mock_run_simulation(config, bandwidth_gbps)` 和 `mock_run_sweep(config, bandwidths_gbps)`。
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/tasks/extract-viz-v1/impl/round-0-summary.md:19:- 引用检查已完成：`scsp_viz`、`run_web.py`、`web`、`tests`、`README.md` 中未发现旧 `from scsp.`、`import scsp.`、`scsp.web_api`、`from .engine` 或 `from .io_utils import write_json` 残留。
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/tasks/extract-viz-v1/impl/round-0-summary.md:21:- 标准库 smoke test 已通过：直接调用 `mock_run_simulation`、`mock_run_sweep`、`run_experiment`，验证单点 metrics 字段、扫描 rows 和实验写入结构。
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/tasks/extract-viz-v1/impl/round-0-summary.md:38:- 从 v0 提取交付层后，应固定执行旧包名与真实引擎耦合扫描，重点覆盖 `from scsp.`、`import scsp.`、`scsp.web_api`、`.engine` 和真实运行函数引用。
+
+exec
+/bin/bash -lc "sed -n '1,320p' scsp_viz/config.py" in /share/guolidong-nfs/SeeSpace/SCSP-Viz
+ succeeded in 0ms:
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Dict, Literal, Tuple
+
+IMAGE_TYPE_DEFAULTS = {
+    "RGB": {"channels": 3, "bytes_per_pixel": 2},
+    "SAR": {"channels": 1, "bytes_per_pixel": 4},
+}
+
+CONFIG_SCHEMA_VERSION = "1.0"
+
+
+def _parse_resolution(text: str) -> Tuple[int, int]:
+    parts = text.lower().split("x")
+    if len(parts) != 2:
+        raise ValueError(f"Invalid resolution format: {text}")
+    width, height = int(parts[0]), int(parts[1])
+    if width <= 0 or height <= 0:
+        raise ValueError(f"Resolution must be positive: {text}")
+    return width, height
+
+
+@dataclass(frozen=True)
+class V1SimulationConfig:
+    # Core variable parameters from README.
+    image_resolution: str
+    tile_size: str
+    link_bandwidth_gbps: float
+    prefill_inter_stage_transfer_mb: float
+    decode_inter_stage_transfer_kb: float
+    flops_per_sample: float
+    peak_vram_gb: float
+    model_name: str = "Qwen2.5-VL-7B"
+    model_params: str = "7B"
+    active_parameter_count: float = 7e9
+    resident_parameter_count: float = 7e9
+    image_type: Literal["RGB", "SAR"] = "RGB"
+
+    # Task and system settings.
+    num_images: int = 1
+    decode_tokens: int = 1
+    channels: int = 3
+    bytes_per_pixel: int = 2
+    big_star_peak_pflops: float = 10.0
+    single_star_compute_utilization: float = 0.6
+    prefill_compute_utilization: float = 0.50
+    prefill_memory_utilization: float = 0.70
+    decode_compute_utilization: float = 0.20
+    decode_memory_utilization: float = 0.70
+    single_node_memory_bandwidth_bytes_per_sec: float = 2.0e13
+    prefill_memory_bytes_per_patch: float = 5.0e10
+    decode_flops_per_token: float = 1.435e11
+    decode_memory_bytes_per_token: float = 1.0e8
+    llm_num_hidden_layers: int = 80
+    llm_hidden_size: int = 8192
+    llm_num_attention_heads: int = 64
+    llm_num_key_value_heads: int = 8
+    vision_patch_size: int = 14
+    vision_spatial_merge_size: int = 2
+    inter_sat_latency_target_ms: float = 1.0
+    peak_power_limit_kw: float = 20.0
+    single_star_compute_payload_power_w: float = 20000.0
+    stage_split_ratio: float = 0.5
+    fixed_sync_overhead_ms: float = 0.0
+    inter_sat_distance_km: float = 10.0
+
+    @property
+    def image_wh(self) -> Tuple[int, int]:
+        return _parse_resolution(self.image_resolution)
+
+    @property
+    def tile_wh(self) -> Tuple[int, int]:
+        return _parse_resolution(self.tile_size)
+
+    @property
+    def big_star_peak_flops(self) -> float:
+        return self.big_star_peak_pflops * 1e15
+
+
+def load_config(path: str | Path) -> V1SimulationConfig:
+    raw = json.loads(Path(path).read_text(encoding="utf-8"))
+    raw.setdefault("image_type", "RGB")
+    if "prefill_inter_stage_transfer_mb" not in raw or "decode_inter_stage_transfer_kb" not in raw:
+        if "inter_stage_transfer_mb" in raw:
+            legacy = float(raw["inter_stage_transfer_mb"])
+            raw.setdefault("prefill_inter_stage_transfer_mb", legacy)
+            raw.setdefault("decode_inter_stage_transfer_kb", legacy * 1000.0)
+    return V1SimulationConfig(**raw)
+
+
+def normalize_raw_config(raw: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Normalize user input config to a versioned, validated dict.
+
+    SCSP-Viz does not load the simulation model registry at runtime. Defaults
+    are intentionally fixed so the visualization layer stays independently
+    runnable with mock data.
+    """
+    normalized = dict(raw)
+    normalized.setdefault("schema_version", CONFIG_SCHEMA_VERSION)
+    normalized.setdefault("image_type", "RGB")
+    normalized.setdefault("model_name", "Qwen2.5-VL-7B")
+    normalized.setdefault("model_params", "7B")
+    normalized.setdefault("link_bandwidth_gbps", 100)
+    normalized.setdefault("flops_per_sample", 5e13)
+    normalized.setdefault("num_images", 1)
+    normalized.setdefault("image_resolution", "512x512")
+    normalized.setdefault("tile_size", "256x256")
+    normalized.setdefault("decode_tokens", 1)
+    normalized.setdefault("big_star_peak_pflops", 10.0)
+    normalized.setdefault("single_star_compute_utilization", 0.6)
+    normalized.setdefault("prefill_compute_utilization", 0.50)
+    normalized.setdefault("prefill_memory_utilization", 0.70)
+    normalized.setdefault("decode_compute_utilization", 0.20)
+    normalized.setdefault("decode_memory_utilization", 0.70)
+    normalized.setdefault("single_node_memory_bandwidth_bytes_per_sec", 2.0e13)
+    normalized.setdefault("prefill_memory_bytes_per_patch", 5.0e10)
+    normalized.setdefault("decode_flops_per_token", 1.435e11)
+    normalized.setdefault("decode_memory_bytes_per_token", 1.0e8)
+    normalized.setdefault("active_parameter_count", 7e9)
+    normalized.setdefault("resident_parameter_count", 7e9)
+    normalized.setdefault("llm_num_hidden_layers", 80)
+    normalized.setdefault("llm_hidden_size", 8192)
+    normalized.setdefault("llm_num_attention_heads", 64)
+    normalized.setdefault("llm_num_key_value_heads", 8)
+    normalized.setdefault("vision_patch_size", 14)
+    normalized.setdefault("vision_spatial_merge_size", 2)
+    normalized.setdefault("inter_sat_latency_target_ms", 1.0)
+    normalized.setdefault("peak_power_limit_kw", 20.0)
+    normalized.setdefault(
+        "single_star_compute_payload_power_w",
+        float(normalized.get("peak_power_limit_kw", 1.0)) * 1000.0,
+    )
+    normalized.setdefault("stage_split_ratio", 0.5)
+    normalized.setdefault("fixed_sync_overhead_ms", 0.0)
+    normalized.setdefault("inter_sat_distance_km", 10.0)
+
+    if "prefill_inter_stage_transfer_mb" not in normalized or "decode_inter_stage_transfer_kb" not in normalized:
+        if "inter_stage_transfer_mb" in normalized:
+            legacy = float(normalized["inter_stage_transfer_mb"])
+            normalized.setdefault("prefill_inter_stage_transfer_mb", legacy)
+            normalized.setdefault("decode_inter_stage_transfer_kb", legacy * 1000.0)
+    normalized.setdefault("prefill_inter_stage_transfer_mb", 256.0)
+    normalized.setdefault("decode_inter_stage_transfer_kb", 512.0)
+    normalized.setdefault("peak_vram_gb", 80.0)
+    return normalized
+
+
+def validate_raw_config(raw: Dict[str, Any]) -> None:
+    required = [
+        "image_resolution",
+        "tile_size",
+        "prefill_inter_stage_transfer_mb",
+        "decode_inter_stage_transfer_kb",
+        "peak_vram_gb",
+    ]
+    for key in required:
+        if key not in raw:
+            raise KeyError(f"Missing required field: {key}")
+
+    image_type = str(raw.get("image_type", "RGB")).upper()
+    if image_type not in IMAGE_TYPE_DEFAULTS:
+        raise ValueError("image_type must be one of: RGB, SAR")
+    if float(raw.get("single_node_memory_bandwidth_bytes_per_sec", 0)) <= 0:
+        raise ValueError("single_node_memory_bandwidth_bytes_per_sec must be positive")
+    for key in (
+        "prefill_compute_utilization",
+        "prefill_memory_utilization",
+        "decode_compute_utilization",
+        "decode_memory_utilization",
+    ):
+        val = float(raw.get(key, 0))
+        if val <= 0 or val > 1:
+            raise ValueError(f"{key} must be in (0, 1]")
+    if float(raw.get("prefill_memory_bytes_per_patch", 0)) < 0:
+        raise ValueError("prefill_memory_bytes_per_patch must be non-negative")
+    if float(raw.get("decode_flops_per_token", 0)) < 0:
+        raise ValueError("decode_flops_per_token must be non-negative")
+    if float(raw.get("decode_memory_bytes_per_token", 0)) < 0:
+        raise ValueError("decode_memory_bytes_per_token must be non-negative")
+    if float(raw.get("active_parameter_count", 0)) <= 0:
+        raise ValueError("active_parameter_count must be positive")
+    if float(raw.get("resident_parameter_count", 0)) <= 0:
+        raise ValueError("resident_parameter_count must be positive")
+    if float(raw.get("active_parameter_count", 0)) > float(raw.get("resident_parameter_count", 0)):
+        raise ValueError("active_parameter_count must be <= resident_parameter_count")
+    if float(raw.get("single_star_compute_payload_power_w", 0)) <= 0:
+        raise ValueError("single_star_compute_payload_power_w must be positive")
+    if int(raw.get("llm_num_hidden_layers", 80)) <= 0:
+        raise ValueError("llm_num_hidden_layers must be positive")
+    if int(raw.get("llm_hidden_size", 8192)) <= 0:
+        raise ValueError("llm_hidden_size must be positive")
+    if int(raw.get("llm_num_attention_heads", 64)) <= 0:
+        raise ValueError("llm_num_attention_heads must be positive")
+    if int(raw.get("llm_num_key_value_heads", 8)) <= 0:
+        raise ValueError("llm_num_key_value_heads must be positive")
+    if int(raw.get("vision_patch_size", 14)) <= 0:
+        raise ValueError("vision_patch_size must be positive")
+    if int(raw.get("vision_spatial_merge_size", 2)) <= 0:
+        raise ValueError("vision_spatial_merge_size must be positive")
+    if int(raw.get("decode_tokens", 1)) < 1:
+        raise ValueError("decode_tokens must be a positive integer")
+    if float(raw.get("prefill_inter_stage_transfer_mb", 0)) < 0:
+        raise ValueError("prefill_inter_stage_transfer_mb must be non-negative")
+    if float(raw.get("decode_inter_stage_transfer_kb", 0)) < 0:
+        raise ValueError("decode_inter_stage_transfer_kb must be non-negative")
+
+
+def build_simulation_config(raw: Dict[str, Any], link_bandwidth_gbps: float) -> V1SimulationConfig:
+    normalized = normalize_raw_config(raw)
+    validate_raw_config(normalized)
+    image_type = str(normalized["image_type"]).upper()
+    image_defaults = IMAGE_TYPE_DEFAULTS[image_type]
+
+    return V1SimulationConfig(
+        image_resolution=normalized["image_resolution"],
+        tile_size=normalized["tile_size"],
+        link_bandwidth_gbps=float(link_bandwidth_gbps),
+        prefill_inter_stage_transfer_mb=float(normalized["prefill_inter_stage_transfer_mb"]),
+        decode_inter_stage_transfer_kb=float(normalized["decode_inter_stage_transfer_kb"]),
+        flops_per_sample=float(normalized["flops_per_sample"]),
+        peak_vram_gb=float(normalized["peak_vram_gb"]),
+        model_name=str(normalized["model_name"]),
+        model_params=str(normalized["model_params"]),
+        active_parameter_count=float(normalized["active_parameter_count"]),
+        resident_parameter_count=float(normalized["resident_parameter_count"]),
+        image_type=image_type,
+        num_images=int(normalized["num_images"]),
+        decode_tokens=int(normalized["decode_tokens"]),
+        channels=int(image_defaults["channels"]),
+        bytes_per_pixel=int(image_defaults["bytes_per_pixel"]),
+        big_star_peak_pflops=float(normalized["big_star_peak_pflops"]),
+        single_star_compute_utilization=float(normalized["single_star_compute_utilization"]),
+        prefill_compute_utilization=float(normalized["prefill_compute_utilization"]),
+        prefill_memory_utilization=float(normalized["prefill_memory_utilization"]),
+        decode_compute_utilization=float(normalized["decode_compute_utilization"]),
+        decode_memory_utilization=float(normalized["decode_memory_utilization"]),
+        single_node_memory_bandwidth_bytes_per_sec=float(normalized["single_node_memory_bandwidth_bytes_per_sec"]),
+        prefill_memory_bytes_per_patch=float(normalized["prefill_memory_bytes_per_patch"]),
+        decode_flops_per_token=float(normalized["decode_flops_per_token"]),
+        decode_memory_bytes_per_token=float(normalized["decode_memory_bytes_per_token"]),
+        llm_num_hidden_layers=int(normalized["llm_num_hidden_layers"]),
+        llm_hidden_size=int(normalized["llm_hidden_size"]),
+        llm_num_attention_heads=int(normalized["llm_num_attention_heads"]),
+        llm_num_key_value_heads=int(normalized["llm_num_key_value_heads"]),
+        vision_patch_size=int(normalized["vision_patch_size"]),
+        vision_spatial_merge_size=int(normalized["vision_spatial_merge_size"]),
+        inter_sat_latency_target_ms=float(normalized["inter_sat_latency_target_ms"]),
+        peak_power_limit_kw=float(normalized["peak_power_limit_kw"]),
+        single_star_compute_payload_power_w=float(normalized["single_star_compute_payload_power_w"]),
+        stage_split_ratio=float(normalized["stage_split_ratio"]),
+        fixed_sync_overhead_ms=float(normalized["fixed_sync_overhead_ms"]),
+        inter_sat_distance_km=float(normalized["inter_sat_distance_km"]),
+    )
+
+
+def dump_config_dict(config: V1SimulationConfig) -> Dict[str, Any]:
+    return {
+        "image_resolution": config.image_resolution,
+        "tile_size": config.tile_size,
+        "image_type": config.image_type,
+        "model_name": config.model_name,
+        "model_params": config.model_params,
+        "active_parameter_count": config.active_parameter_count,
+        "resident_parameter_count": config.resident_parameter_count,
+        "link_bandwidth_gbps": config.link_bandwidth_gbps,
+        "prefill_inter_stage_transfer_mb": config.prefill_inter_stage_transfer_mb,
+        "decode_inter_stage_transfer_kb": config.decode_inter_stage_transfer_kb,
+        "flops_per_sample": config.flops_per_sample,
+        "peak_vram_gb": config.peak_vram_gb,
+        "num_images": config.num_images,
+        "decode_tokens": config.decode_tokens,
+        "channels": config.channels,
+        "bytes_per_pixel": config.bytes_per_pixel,
+        "big_star_peak_pflops": config.big_star_peak_pflops,
+        "single_star_compute_utilization": config.single_star_compute_utilization,
+        "prefill_compute_utilization": config.prefill_compute_utilization,
+        "prefill_memory_utilization": config.prefill_memory_utilization,
+        "decode_compute_utilization": config.decode_compute_utilization,
+        "decode_memory_utilization": config.decode_memory_utilization,
+        "single_node_memory_bandwidth_bytes_per_sec": config.single_node_memory_bandwidth_bytes_per_sec,
+        "prefill_memory_bytes_per_patch": config.prefill_memory_bytes_per_patch,
+        "decode_flops_per_token": config.decode_flops_per_token,
+        "decode_memory_bytes_per_token": config.decode_memory_bytes_per_token,
+        "llm_num_hidden_layers": config.llm_num_hidden_layers,
+        "llm_hidden_size": config.llm_hidden_size,
+        "llm_num_attention_heads": config.llm_num_attention_heads,
+        "llm_num_key_value_heads": config.llm_num_key_value_heads,
+        "vision_patch_size": config.vision_patch_size,
+        "vision_spatial_merge_size": config.vision_spatial_merge_size,
+        "inter_sat_latency_target_ms": config.inter_sat_latency_target_ms,
+        "peak_power_limit_kw": config.peak_power_limit_kw,
+        "single_star_compute_payload_power_w": config.single_star_compute_payload_power_w,
+        "stage_split_ratio": config.stage_split_ratio,
+        "fixed_sync_overhead_ms": config.fixed_sync_overhead_ms,
+        "inter_sat_distance_km": config.inter_sat_distance_km,
+    }
+
+exec
+/bin/bash -lc "sed -n '1,240p' tests/test_web_api.py && sed -n '1,220p' tests/test_experiment.py" in /share/guolidong-nfs/SeeSpace/SCSP-Viz
+ succeeded in 0ms:
+from __future__ import annotations
+
+import asyncio
+import json
+import unittest
+from typing import Any, Dict, Tuple
+
+try:
+    from scsp_viz.web_api import app
+except ModuleNotFoundError as exc:  # pragma: no cover - dependency bootstrap path
+    raise unittest.SkipTest("fastapi is not installed") from exc
+
+
+METRIC_FIELDS = {
+    "total_samples",
+    "total_latency_s",
+    "data_tx_latency_s",
+    "inter_stage_latency_s",
+    "stage1_compute_latency_s",
+    "stage2_compute_latency_s",
+    "effective_compute_flops",
+    "effective_compute_pflops",
+    "ideal_peak_pflops",
+    "compute_utilization",
+    "bottleneck_stage",
+    "decode_latency_s_per_token",
+    "decode_total_latency_s",
+    "decode_compute_latency_s_per_token",
+    "decode_memory_latency_s_per_token",
+    "decode_effective_compute_pflops",
+    "decode_bottleneck",
+    "prefill_compute_time_s",
+    "prefill_memory_time_s",
+    "prefill_time_s",
+    "prefill_bottleneck",
+    "decode_energy_efficiency_tokens_per_j",
+    "total_inference_time_s",
+    "prefill_peak_memory_bytes",
+    "prefill_peak_memory_gb",
+    "single_star_peak_memory_bytes",
+    "single_star_peak_memory_gb",
+    "prefill_weight_memory_bytes",
+    "prefill_kv_memory_bytes",
+    "prefill_activation_peak_memory_bytes",
+    "prefill_workspace_memory_bytes",
+}
+
+
+def _request(method: str, path: str, json_body: Dict[str, Any] | None = None) -> Tuple[int, Dict[str, Any]]:
+    async def run() -> Tuple[int, Dict[str, Any]]:
+        body = b"" if json_body is None else json.dumps(json_body).encode("utf-8")
+        messages = [{"type": "http.request", "body": body, "more_body": False}]
+        sent = []
+
+        async def receive() -> Dict[str, Any]:
+            return messages.pop(0)
+
+        async def send(message: Dict[str, Any]) -> None:
+            sent.append(message)
+
+        scope = {
+            "type": "http",
+            "asgi": {"version": "3.0"},
+            "http_version": "1.1",
+            "method": method,
+            "scheme": "http",
+            "path": path,
+            "raw_path": path.encode("ascii"),
+            "query_string": b"",
+            "headers": [(b"host", b"testserver"), (b"content-type", b"application/json")],
+            "client": ("127.0.0.1", 1234),
+            "server": ("testserver", 80),
+        }
+        await app(scope, receive, send)
+        status = next(message["status"] for message in sent if message["type"] == "http.response.start")
+        response_body = b"".join(message.get("body", b"") for message in sent if message["type"] == "http.response.body")
+        return status, json.loads(response_body.decode("utf-8"))
+
+    return asyncio.run(run())
+
+
+def test_health_endpoint() -> None:
+    status, payload = _request("GET", "/api/health")
+
+    assert status == 200
+    assert payload == {"status": "ok"}
+
+
+def test_single_simulation_api_returns_full_mock_metrics() -> None:
+    status, payload = _request(
+        "POST",
+        "/api/simulations/single",
+        {"config": {"link_bandwidth_gbps": 100}, "bandwidth_gbps": 100},
+    )
+
+    assert status == 200
+    assert payload["mode"] == "single"
+    assert METRIC_FIELDS <= set(payload["metrics"])
+    assert payload["config"]["link_bandwidth_gbps"] == 100.0
+
+
+def test_sweep_simulation_api_returns_required_rows() -> None:
+    status, payload = _request(
+        "POST",
+        "/api/simulations/sweep",
+        {"config": {"link_bandwidth_gbps": [10, 100]}, "bandwidths_gbps": [10, 100]},
+    )
+
+    assert status == 200
+    assert payload["mode"] == "sweep"
+    assert payload["knee_reason"]
+    assert len(payload["rows"]) == 2
+    assert {
+        "link_bandwidth_gbps",
+        "total_latency_s",
+        "effective_compute_pflops",
+        "bottleneck_stage",
+        "decode_latency_s_per_token",
+        "decode_total_latency_s",
+        "decode_effective_compute_pflops",
+        "decode_energy_efficiency_tokens_per_j",
+        "decode_bottleneck",
+    } <= set(payload["rows"][0])
+from __future__ import annotations
+
+import tempfile
+import unittest
+from pathlib import Path
+
+from scsp_viz.experiment import JsonlExperimentStore, reproduce_experiment, run_experiment
+
+
+class TestExperimentManagement(unittest.TestCase):
+    def _minimal_config(self) -> dict:
+        return {
+            "image_resolution": "1024x1024",
+            "tile_size": "512x512",
+            "image_type": "RGB",
+            "link_bandwidth_gbps": [10, 50, 100],
+            "prefill_inter_stage_transfer_mb": 2.2,
+            "decode_inter_stage_transfer_kb": 2200.0,
+            "flops_per_sample": 4e12,
+            "peak_vram_gb": 120,
+        }
+
+    def test_record_persist_and_reproduce(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output_root = root / "runs"
+            store_path = root / "records.jsonl"
+
+            first = run_experiment(
+                raw_config=self._minimal_config(),
+                output_root=output_root,
+                store_path=store_path,
+                experiment_name="unit-test",
+                template_name="bandwidth_sensitivity",
+            )
+            self.assertEqual(first["record"]["status"], "success")
+            self.assertEqual(first["payload"]["mode"], "sweep")
+            self.assertTrue(store_path.exists())
+            self.assertTrue(Path(first["record"]["output_files"][1]).exists())
+            self.assertIn("best_decode_latency_s_per_token", first["record"]["result_summary"])
+
+            records = JsonlExperimentStore(store_path).list_records()
+            self.assertGreaterEqual(len(records), 1)
+
+            repro = reproduce_experiment(
+                experiment_id=first["record"]["experiment_id"],
+                output_root=output_root,
+                store_path=store_path,
+            )
+            self.assertIn("reproduced_experiment_id", repro)
+            self.assertEqual(repro["source_experiment_id"], first["record"]["experiment_id"])
+
+
+if __name__ == "__main__":
+    unittest.main()
+
+exec
+/bin/bash -lc "sed -n '1,240p' scsp_viz/visualization.py" in /share/guolidong-nfs/SeeSpace/SCSP-Viz
+ succeeded in 0ms:
+from __future__ import annotations
+
+import csv
+import json
+from pathlib import Path
+from typing import Any, Dict, List, Sequence
+
+
+def _coerce_number(value: Any) -> Any:
+    if isinstance(value, str):
+        try:
+            return float(value) if "." in value else int(value)
+        except ValueError:
+            return value
+    return value
+
+
+def _load_sweep_rows(source: Sequence[Dict[str, Any]] | str | Path) -> List[Dict[str, Any]]:
+    if isinstance(source, (str, Path)):
+        path = Path(source)
+        if not path.exists():
+            raise FileNotFoundError(f"Sweep result file not found: {path}")
+        suffix = path.suffix.lower()
+        if suffix == ".csv":
+            with path.open("r", encoding="utf-8", newline="") as f:
+                return [{k: _coerce_number(v) for k, v in row.items()} for row in csv.DictReader(f)]
+        if suffix == ".json":
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(payload, dict) and "rows" in payload:
+                return list(payload["rows"])
+            if isinstance(payload, list):
+                return payload
+            raise ValueError("JSON sweep result must be a list or an object containing rows")
+        raise ValueError("Sweep result file must be CSV or JSON")
+    return [dict(row) for row in source]
+
+
+def plot_sweep_latency(rows: List[Dict[str, Any]] | str | Path, output_prefix: str, model_name: str) -> str:
+    output_dir = Path(output_prefix)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    plot_path = output_dir / "sweep_latency_vs_bandwidth.png"
+
+    sweep_rows = _load_sweep_rows(rows)
+    if not sweep_rows:
+        raise ValueError("Sweep result rows cannot be empty")
+    sorted_rows = sorted(sweep_rows, key=lambda x: x["link_bandwidth_gbps"])
+    x = [row["link_bandwidth_gbps"] for row in sorted_rows]
+    y = [row["total_latency_s"] for row in sorted_rows]
+
+    import matplotlib.pyplot as plt
+
+    plt.figure(figsize=(8, 5))
+    plt.plot(x, y, marker="o", linestyle="-", linewidth=2)
+    plt.xlabel("Inter-satellite Link Bandwidth (Gbps)")
+    plt.ylabel("Total Latency (s)")
+    plt.title(model_name)
+    plt.grid(True, linestyle="--", alpha=0.6)
+    plt.tight_layout()
+    plt.savefig(plot_path, dpi=150)
+    plt.close()
+    return str(plot_path)
+
+exec
+/bin/bash -lc "sed -n '1,280p' /share/guolidong-nfs/SeeSpace/SCSP_v0/scsp/engine.py && sed -n '1,220p' /share/guolidong-nfs/SeeSpace/SCSP_v0/scsp/models.py" in /share/guolidong-nfs/SeeSpace/SCSP-Viz
+ succeeded in 0ms:
+from __future__ import annotations
+
+from dataclasses import asdict
+from numbers import Integral
+from typing import Any, Dict, List
+
+from .analysis import detect_performance_knee, sweep_bandwidth
+from .config import build_simulation_config, dump_config_dict, normalize_raw_config
+from .simulator import run_v1_simulation
+
+
+def validate_bandwidth_input(value: Any) -> None:
+    if isinstance(value, Integral):
+        if value <= 0:
+            raise ValueError("link_bandwidth_gbps must be a positive integer")
+        return
+
+    if isinstance(value, list):
+        if not value:
+            raise ValueError("link_bandwidth_gbps list cannot be empty")
+        for item in value:
+            if not isinstance(item, Integral):
+                raise TypeError("link_bandwidth_gbps list items must be integers")
+            if item <= 0:
+                raise ValueError("link_bandwidth_gbps list items must be positive integers")
+        return
+
+    raise TypeError("link_bandwidth_gbps must be an integer or a list of integers")
+
+
+def run_simulation(raw_config: Dict[str, Any], bandwidth_gbps: int | None = None) -> Dict[str, Any]:
+    normalized = normalize_raw_config(raw_config)
+    bw = int(normalized["link_bandwidth_gbps"]) if bandwidth_gbps is None else int(bandwidth_gbps)
+    cfg = build_simulation_config(normalized, bw)
+    metrics = run_v1_simulation(cfg)
+    return {
+        "mode": "single",
+        "config": dump_config_dict(cfg),
+        "metrics": asdict(metrics),
+    }
+
+
+def run_sweep(raw_config: Dict[str, Any], bandwidths_gbps: List[int] | None = None) -> Dict[str, Any]:
+    normalized = normalize_raw_config(raw_config)
+    if bandwidths_gbps is None:
+        bandwidths_gbps = [int(v) for v in normalized["link_bandwidth_gbps"]]
+    base_cfg = build_simulation_config(normalized, int(bandwidths_gbps[0]))
+    rows = sweep_bandwidth(base_cfg, [float(v) for v in bandwidths_gbps])
+    knee_bw, knee_reason = detect_performance_knee(rows)
+    return {
+        "mode": "sweep",
+        "knee_bandwidth_gbps": knee_bw,
+        "knee_reason": knee_reason,
+        "rows": rows,
+    }
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class SimulationMetrics:
+    total_samples: int
+    total_latency_s: float
+    data_tx_latency_s: float
+    inter_stage_latency_s: float
+    stage1_compute_latency_s: float
+    stage2_compute_latency_s: float
+    effective_compute_flops: float
+    effective_compute_pflops: float
+    ideal_peak_pflops: float
+    compute_utilization: float
+    bottleneck_stage: str
+    decode_latency_s_per_token: float = 0.0
+    decode_total_latency_s: float = 0.0
+    decode_compute_latency_s_per_token: float = 0.0
+    decode_memory_latency_s_per_token: float = 0.0
+    decode_effective_compute_pflops: float = 0.0
+    decode_bottleneck: str = "unknown"
+    prefill_compute_time_s: float = 0.0
+    prefill_memory_time_s: float = 0.0
+    prefill_time_s: float = 0.0
+    prefill_bottleneck: str = "unknown"
+    decode_energy_efficiency_tokens_per_j: float = 0.0
+    total_inference_time_s: float = 0.0
+    prefill_peak_memory_bytes: float = 0.0
+    prefill_peak_memory_gb: float = 0.0
+    single_star_peak_memory_bytes: float = 0.0
+    single_star_peak_memory_gb: float = 0.0
+    prefill_weight_memory_bytes: float = 0.0
+    prefill_kv_memory_bytes: float = 0.0
+    prefill_activation_peak_memory_bytes: float = 0.0
+    prefill_workspace_memory_bytes: float = 0.0
+
+codex
+现有实现已经基本按 Mock 层重构，但我还在核对接口路径、前端调用和配置字段，确保不是只有测试覆盖的窄路径能跑。下一步会检查 `web/index.html` 里实际请求的 API，必要时同步后端兼容接口。
+exec
+/bin/bash -lc "rg -n \"fetch\\(|/api/|scsp|SCSP|result_|plot|experiments|simulations\" web/index.html README.md run_web.py requirements.txt" in /share/guolidong-nfs/SeeSpace/SCSP-Viz
+ succeeded in 0ms:
+requirements.txt:4:matplotlib
+README.md:1:# SCSP-Viz 星座智算可视化分析软件 V1.0
+README.md:3:SCSP-Viz 是从 SCSP 仿真平台提取出的独立可视化交付层。项目保留配置校验、实验记录、结果导出、前端展示和标准化 REST API，不执行真实仿真计算；所有仿真结果由 `scsp_viz.mock_engine` 生成，便于演示、集成联调和可视化验收。
+README.md:7:- 独立 FastAPI 服务，不依赖 SCSP_v0 源码包。
+README.md:19:SCSP-Viz/
+README.md:22:├── experiments/                    # 示例实验记录与运行结果
+README.md:23:├── scsp_viz/                       # 独立 Python 包
+README.md:39:cd /share/guolidong-nfs/SeeSpace/SCSP-Viz
+README.md:62:SCSP-Viz 按 SCSP 仿真平台的标准化 REST API 交互规范暴露可视化层接口，输入字段保持 `config` 字典形式，输出结构保持单点、扫描和实验记录的标准形态。当前版本所有计算结果均来自 Mock 数据层。
+README.md:64:- `GET /api/health`：健康检查，返回 `{"status": "ok"}`。
+README.md:65:- `POST /api/simulations/single`：单点仿真 Mock。请求体包含 `config` 和可选 `bandwidth_gbps`，返回 `mode=config=metrics`。
+README.md:66:- `POST /api/simulations/sweep`：带宽扫描 Mock。请求体包含 `config` 和可选 `bandwidths_gbps`，返回 `mode=knee_bandwidth_gbps=knee_reason=rows`。
+README.md:67:- `POST /api/experiments/run`：运行 Mock 实验，输出实验记录、结果 JSON，扫描模式额外输出 CSV。
+README.md:68:- `GET /api/experiments`：读取 JSONL 实验记录列表。
+README.md:69:- `GET /api/experiments/{experiment_id}`：读取单条实验记录。
+README.md:70:- `POST /api/experiments/reproduce/{experiment_id}`：基于历史输入配置重新生成 Mock 结果并返回摘要差异。
+README.md:71:- `GET /api/experiments/{experiment_id}/export`：导出实验记录 JSON。
+README.md:75:`web/index.html` 是 SCSP-Viz 的单页可视化界面，通过同源 API 调用 `/api/simulations/*` 与 `/api/experiments/*`。页面会读取 `/assets/earth-horizon-reference.png` 和 `/configs/model_registry.json` 用于展示与表单选项，但后端不会依赖模型注册表执行真实计算。
+README.md:79:本项目作为 SCSP-Viz 星座智算可视化分析软件 V1.0 交付层示例，许可证和对外发布范围以项目所有者后续声明为准。未获得授权前，不得将项目代码、资产或接口文档用于未许可的商业分发。
+run_web.py:8:    uvicorn.run("scsp_viz.web_api:app", host="0.0.0.0", port=8000, reload=False)
+web/index.html:6:    <title>SCSP-Viz 星座智算可视化分析软件 V1.0</title>
+web/index.html:867:              <p class="name-cn">SCSP-Viz</p>
+web/index.html:1285:        <div class="footer">SCSP-Viz V1.0</div>
+web/index.html:1525:          const resp = await fetch("/configs/model_registry.json", { cache: "no-store" });
+web/index.html:1566:        const r = await fetch(url);
+web/index.html:1570:        const r = await fetch(url, {
+web/index.html:2935:              const ret = await apiPost("/api/simulations/sweep", { config: cfg, bandwidths_gbps: bws });
+web/index.html:2953:                const ret = await apiPost("/api/simulations/single", { config: pointCfg, bandwidth_gbps: bw });
+web/index.html:2982:                const ret = await apiPost("/api/simulations/single", { config: pointCfg, bandwidth_gbps: bw });
+web/index.html:3012:                const ret = await apiPost("/api/simulations/single", { config: c, bandwidth_gbps: bw });
+web/index.html:3228:            a.download = "scsp_model_scale_peak_memory.jpg";
+web/index.html:3255:          a.download = "scsp_experiment_charts.jpg";
+web/index.html:3297:          downloadText("scsp_experiment_results.csv", buildExpResultsCsv(), "text/csv;charset=utf-8");
+web/index.html:3431:          const kpiRet = await apiPost("/api/simulations/single", {
+web/index.html:3442:          const bwRet = await apiPost("/api/simulations/sweep", {
+web/index.html:3461:            const ret = await apiPost("/api/simulations/single", { config: pointCfg, bandwidth_gbps: bwForCompute });
+web/index.html:3500:            byId("pageTitle").textContent = titleMap[page] || "SCSP-Viz";
+web/index.html:3558:          const ret = await apiPost("/api/simulations/single", { config: cfg, bandwidth_gbps: bw });
+web/index.html:3593:          const ret = await apiPost("/api/experiments/run", { config: state.config, template_name: "bandwidth_sensitivity" });
+web/index.html:3612:          const health = await apiGet("/api/health");
+
+exec
+/bin/bash -lc "sed -n '1,260p' /share/guolidong-nfs/SeeSpace/SCSP_v0/scsp/web_api.py" in /share/guolidong-nfs/SeeSpace/SCSP-Viz
+exec
+/bin/bash -lc "find experiments -maxdepth 3 -type f | sort | sed -n '1,80p'" in /share/guolidong-nfs/SeeSpace/SCSP-Viz
+ succeeded in 0ms:
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any, Dict, List, Literal, Optional
+
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
+
+from .engine import run_simulation, run_sweep
+from .experiment import JsonlExperimentStore, reproduce_experiment, run_experiment
+
+DEFAULT_OUTPUT_ROOT = Path("experiments/runs")
+DEFAULT_STORE_PATH = Path("experiments/records.jsonl")
+
+
+class SingleSimulationRequest(BaseModel):
+    config: Dict[str, Any]
+    bandwidth_gbps: Optional[int] = None
+
+
+class SweepSimulationRequest(BaseModel):
+    config: Dict[str, Any]
+    bandwidths_gbps: Optional[List[int]] = None
+
+
+class RunExperimentRequest(BaseModel):
+    config: Dict[str, Any]
+    experiment_name: Optional[str] = None
+    template_name: Optional[Literal["single_point", "bandwidth_sensitivity"]] = None
+    output_root: Optional[str] = None
+    store_path: Optional[str] = None
+
+
+def create_app() -> FastAPI:
+    app = FastAPI(title="SCSP API", version="0")
+    web_root = Path(__file__).resolve().parents[1] / "web"
+    assets_root = Path(__file__).resolve().parents[1] / "assets"
+    configs_root = Path(__file__).resolve().parents[1] / "configs"
+    if web_root.exists():
+        app.mount("/web", StaticFiles(directory=str(web_root)), name="web")
+    if assets_root.exists():
+        app.mount("/assets", StaticFiles(directory=str(assets_root)), name="assets")
+    if configs_root.exists():
+        app.mount("/configs", StaticFiles(directory=str(configs_root)), name="configs")
+
+    @app.get("/api/health")
+    def health() -> Dict[str, str]:
+        return {"status": "ok"}
+
+    @app.post("/api/simulations/single")
+    def api_run_single(req: SingleSimulationRequest) -> Dict[str, Any]:
+        try:
+            return run_simulation(req.config, bandwidth_gbps=req.bandwidth_gbps)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+    @app.post("/api/simulations/sweep")
+    def api_run_sweep(req: SweepSimulationRequest) -> Dict[str, Any]:
+        try:
+            return run_sweep(req.config, bandwidths_gbps=req.bandwidths_gbps)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+    @app.post("/api/experiments/run")
+    def api_run_experiment(req: RunExperimentRequest) -> Dict[str, Any]:
+        output_root = req.output_root or str(DEFAULT_OUTPUT_ROOT)
+        store_path = req.store_path or str(DEFAULT_STORE_PATH)
+        try:
+            return run_experiment(
+                raw_config=req.config,
+                output_root=output_root,
+                store_path=store_path,
+                experiment_name=req.experiment_name,
+                template_name=req.template_name,
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+    @app.get("/api/experiments")
+    def api_list_experiments(store_path: Optional[str] = None) -> Dict[str, Any]:
+        path = store_path or str(DEFAULT_STORE_PATH)
+        store = JsonlExperimentStore(path)
+        records = store.list_records()
+        return {"count": len(records), "records": records}
+
+    @app.get("/api/experiments/{experiment_id}")
+    def api_get_experiment(experiment_id: str, store_path: Optional[str] = None) -> Dict[str, Any]:
+        path = store_path or str(DEFAULT_STORE_PATH)
+        store = JsonlExperimentStore(path)
+        try:
+            return store.get(experiment_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+
+    @app.post("/api/experiments/reproduce/{experiment_id}")
+    def api_reproduce_experiment(
+        experiment_id: str,
+        output_root: Optional[str] = None,
+        store_path: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        try:
+            return reproduce_experiment(
+                experiment_id=experiment_id,
+                output_root=output_root or str(DEFAULT_OUTPUT_ROOT),
+                store_path=store_path or str(DEFAULT_STORE_PATH),
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+    @app.get("/api/experiments/{experiment_id}/export")
+    def api_export_experiment(experiment_id: str, store_path: Optional[str] = None) -> Dict[str, Any]:
+        path = store_path or str(DEFAULT_STORE_PATH)
+        store = JsonlExperimentStore(path)
+        try:
+            record = store.get(experiment_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+        return {"experiment": record, "export_format": "json"}
+
+    @app.get("/")
+    def index() -> FileResponse:
+        index_path = web_root / "index.html"
+        if not index_path.exists():
+            raise HTTPException(status_code=404, detail="Frontend page not found")
+        return FileResponse(index_path)
+
+    return app
+
+
+app = create_app()
+
+ succeeded in 0ms:
+experiments/records.jsonl
+experiments/runs/41fa83bd-b32a-4daa-ab61-cf1aac702698/input_config.json
+experiments/runs/41fa83bd-b32a-4daa-ab61-cf1aac702698/result_sweep.csv
+experiments/runs/41fa83bd-b32a-4daa-ab61-cf1aac702698/result_sweep.json
+experiments/runs/5329f9d5-87aa-4414-a3ed-a467876a50f9/input_config.json
+experiments/runs/5329f9d5-87aa-4414-a3ed-a467876a50f9/result_sweep.csv
+experiments/runs/5329f9d5-87aa-4414-a3ed-a467876a50f9/result_sweep.json
+experiments/runs/60222206-59b7-487e-90f4-3bfde33d5ba4/input_config.json
+experiments/runs/60222206-59b7-487e-90f4-3bfde33d5ba4/result_sweep.csv
+experiments/runs/60222206-59b7-487e-90f4-3bfde33d5ba4/result_sweep.json
+experiments/runs/99c67754-a189-4781-94a4-19eedef915ec/input_config.json
+experiments/runs/99c67754-a189-4781-94a4-19eedef915ec/result_sweep.csv
+experiments/runs/99c67754-a189-4781-94a4-19eedef915ec/result_sweep.json
+
+exec
+/bin/bash -lc "cat requirements.txt && sed -n '1,220p' README.md" in /share/guolidong-nfs/SeeSpace/SCSP-Viz
+ succeeded in 0ms:
+fastapi
+uvicorn
+pydantic
+matplotlib
+# SCSP-Viz 星座智算可视化分析软件 V1.0
+
+SCSP-Viz 是从 SCSP 仿真平台提取出的独立可视化交付层。项目保留配置校验、实验记录、结果导出、前端展示和标准化 REST API，不执行真实仿真计算；所有仿真结果由 `scsp_viz.mock_engine` 生成，便于演示、集成联调和可视化验收。
+
+## 功能特性
+
+- 独立 FastAPI 服务，不依赖 SCSP_v0 源码包。
+- 提供单点仿真 Mock API，返回与 v0 `SimulationMetrics` 对齐的完整指标结构。
+- 提供带宽扫描 Mock API，返回 knee bandwidth、knee reason 和扫描 rows。
+- 支持实验运行、实验记录 JSONL 存储、结果 JSON/CSV 输出。
+- 支持实验复现实验接口，基于 Mock 数据生成对比摘要。
+- 保留配置标准化与校验层，用于前端表单展示和接口输入检查。
+- 保留扫描延迟可视化函数，可从 CSV 或 JSON 实验结果文件绘图。
+- 提供静态前端页面、资产和模型注册表配置文件，便于离线展示。
+
+## 目录结构
+
+```text
+SCSP-Viz/
+├── assets/                         # 前端静态图片资产
+├── configs/                        # 前端展示用配置数据
+├── experiments/                    # 示例实验记录与运行结果
+├── scsp_viz/                       # 独立 Python 包
+│   ├── config.py                   # V1 配置模型、标准化和校验
+│   ├── experiment.py               # 实验记录、运行、复现和摘要
+│   ├── mock_engine.py              # Mock 单点/扫描数据生成器
+│   ├── models.py                   # 指标 dataclass
+│   ├── visualization.py            # 结果文件绘图
+│   └── web_api.py                  # REST API 与静态页面服务
+├── tests/                          # Mock API 与实验层测试
+├── web/index.html                  # 前端页面
+├── requirements.txt                # 运行依赖
+└── run_web.py                      # 启动脚本
+```
+
+## 安装依赖
+
+```bash
+cd /share/guolidong-nfs/SeeSpace/SCSP-Viz
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+运行测试还需要安装 `pytest`：
+
+```bash
+pip install pytest
+pytest
+```
+
+## 启动方式
+
+```bash
+python run_web.py
+```
+
+默认监听 `0.0.0.0:8000`，浏览器访问 `http://localhost:8000/` 查看前端页面。
+
+## 接口说明
+
+SCSP-Viz 按 SCSP 仿真平台的标准化 REST API 交互规范暴露可视化层接口，输入字段保持 `config` 字典形式，输出结构保持单点、扫描和实验记录的标准形态。当前版本所有计算结果均来自 Mock 数据层。
+
+- `GET /api/health`：健康检查，返回 `{"status": "ok"}`。
+- `POST /api/simulations/single`：单点仿真 Mock。请求体包含 `config` 和可选 `bandwidth_gbps`，返回 `mode=config=metrics`。
+- `POST /api/simulations/sweep`：带宽扫描 Mock。请求体包含 `config` 和可选 `bandwidths_gbps`，返回 `mode=knee_bandwidth_gbps=knee_reason=rows`。
+- `POST /api/experiments/run`：运行 Mock 实验，输出实验记录、结果 JSON，扫描模式额外输出 CSV。
+- `GET /api/experiments`：读取 JSONL 实验记录列表。
+- `GET /api/experiments/{experiment_id}`：读取单条实验记录。
+- `POST /api/experiments/reproduce/{experiment_id}`：基于历史输入配置重新生成 Mock 结果并返回摘要差异。
+- `GET /api/experiments/{experiment_id}/export`：导出实验记录 JSON。
+
+## 前端页面说明
+
+`web/index.html` 是 SCSP-Viz 的单页可视化界面，通过同源 API 调用 `/api/simulations/*` 与 `/api/experiments/*`。页面会读取 `/assets/earth-horizon-reference.png` 和 `/configs/model_registry.json` 用于展示与表单选项，但后端不会依赖模型注册表执行真实计算。
+
+## 许可证声明
+
+本项目作为 SCSP-Viz 星座智算可视化分析软件 V1.0 交付层示例，许可证和对外发布范围以项目所有者后续声明为准。未获得授权前，不得将项目代码、资产或接口文档用于未许可的商业分发。
+
+exec
+/bin/bash -lc "sed -n '1,200p' /share/guolidong-nfs/SeeSpace/SCSP_v0/scsp/visualization.py" in /share/guolidong-nfs/SeeSpace/SCSP-Viz
+ succeeded in 0ms:
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any, Dict, List
+
+
+def plot_sweep_latency(rows: List[Dict[str, Any]], output_prefix: str, model_name: str) -> str:
+    output_dir = Path(output_prefix)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    plot_path = output_dir / "sweep_latency_vs_bandwidth.png"
+
+    sorted_rows = sorted(rows, key=lambda x: x["link_bandwidth_gbps"])
+    x = [row["link_bandwidth_gbps"] for row in sorted_rows]
+    y = [row["total_latency_s"] for row in sorted_rows]
+
+    import matplotlib.pyplot as plt
+
+    plt.figure(figsize=(8, 5))
+    plt.plot(x, y, marker="o", linestyle="-", linewidth=2)
+    plt.xlabel("Inter-satellite Link Bandwidth (Gbps)")
+    plt.ylabel("Total Latency (s)")
+    plt.title(model_name)
+    plt.grid(True, linestyle="--", alpha=0.6)
+    plt.tight_layout()
+    plt.savefig(plot_path, dpi=150)
+    plt.close()
+    return str(plot_path)
+
+exec
+/bin/bash -lc 'python -m pytest -q' in /share/guolidong-nfs/SeeSpace/SCSP-Viz
+ exited 127 in 0ms:
+/bin/bash: line 1: python: command not found
+
+codex
+`python` 命令在这个环境里不可用，我会改用 `python3` 继续跑测试和启动验证。前端请求路径与当前后端接口一致，`plot_sweep_latency` 也保留了 v0 参数顺序并扩展为支持 CSV/JSON 路径输入。
+exec
+/bin/bash -lc 'python3 -m pytest -q' in /share/guolidong-nfs/SeeSpace/SCSP-Viz
+ exited 1 in 0ms:
+/usr/bin/python3: No module named pytest
+
+exec
+/bin/bash -lc "python3 - <<'PY'
+from scsp_viz.mock_engine import mock_run_simulation, mock_run_sweep
+required_metrics = {
+    'total_samples', 'total_latency_s', 'data_tx_latency_s', 'inter_stage_latency_s',
+    'stage1_compute_latency_s', 'stage2_compute_latency_s', 'effective_compute_flops',
+    'effective_compute_pflops', 'ideal_peak_pflops', 'compute_utilization', 'bottleneck_stage',
+    'decode_latency_s_per_token', 'decode_total_latency_s', 'decode_compute_latency_s_per_token',
+    'decode_memory_latency_s_per_token', 'decode_effective_compute_pflops', 'decode_bottleneck',
+    'prefill_compute_time_s', 'prefill_memory_time_s', 'prefill_time_s', 'prefill_bottleneck',
+    'decode_energy_efficiency_tokens_per_j', 'total_inference_time_s',
+    'prefill_peak_memory_bytes', 'prefill_peak_memory_gb', 'single_star_peak_memory_bytes',
+    'single_star_peak_memory_gb', 'prefill_weight_memory_bytes', 'prefill_kv_memory_bytes',
+    'prefill_activation_peak_memory_bytes', 'prefill_workspace_memory_bytes'
+}
+required_row = {
+    'link_bandwidth_gbps', 'total_latency_s', 'effective_compute_pflops', 'bottleneck_stage',
+    'decode_latency_s_per_token', 'decode_total_latency_s', 'decode_effective_compute_pflops',
+    'decode_energy_efficiency_tokens_per_j', 'decode_bottleneck'
+}
+single = mock_run_simulation({'link_bandwidth_gbps': 100}, 100)
+sweep = mock_run_sweep({'link_bandwidth_gbps': [10, 100]}, [10, 100])
+assert single['mode'] == 'single'
+assert required_metrics <= set(single['metrics'])
+assert sweep['mode'] == 'sweep'
+assert required_row <= set(sweep['rows'][0])
+print('mock structure ok')
+PY" in /share/guolidong-nfs/SeeSpace/SCSP-Viz
+ succeeded in 0ms:
+mock structure ok
+
+codex
+`pytest` 没有安装；README 已把它列为测试额外依赖，但当前环境不能直接用 `python3 -m pytest` 验证。我会用标准库方式执行实验测试，并直接调用 API 测试函数做等价 smoke test。
+exec
+/bin/bash -lc "python3 - <<'PY'
+from scsp_viz.web_api import app
+print(app.title, app.version)
+PY" in /share/guolidong-nfs/SeeSpace/SCSP-Viz
+ exited 1 in 0ms:
+Traceback (most recent call last):
+  File "<stdin>", line 1, in <module>
+  File "/share/guolidong-nfs/SeeSpace/SCSP-Viz/scsp_viz/web_api.py", line 6, in <module>
+    from fastapi import FastAPI, HTTPException
+ModuleNotFoundError: No module named 'fastapi'
+
+exec
+/bin/bash -lc "python3 - <<'PY'
+from tests import test_web_api
+
+test_web_api.test_health_endpoint()
+test_web_api.test_single_simulation_api_returns_full_mock_metrics()
+test_web_api.test_sweep_simulation_api_returns_required_rows()
+print('web api smoke tests ok')
+PY" in /share/guolidong-nfs/SeeSpace/SCSP-Viz
+ exited 1 in 0ms:
+Traceback (most recent call last):
+  File "/share/guolidong-nfs/SeeSpace/SCSP-Viz/tests/test_web_api.py", line 9, in <module>
+    from scsp_viz.web_api import app
+  File "/share/guolidong-nfs/SeeSpace/SCSP-Viz/scsp_viz/web_api.py", line 6, in <module>
+    from fastapi import FastAPI, HTTPException
+ModuleNotFoundError: No module named 'fastapi'
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "<stdin>", line 1, in <module>
+  File "/share/guolidong-nfs/SeeSpace/SCSP-Viz/tests/test_web_api.py", line 11, in <module>
+    raise unittest.SkipTest("fastapi is not installed") from exc
+unittest.case.SkipTest: fastapi is not installed
+
+exec
+/bin/bash -lc 'python3 -m unittest tests/test_experiment.py -v' in /share/guolidong-nfs/SeeSpace/SCSP-Viz
+ succeeded in 0ms:
+test_record_persist_and_reproduce (tests.test_experiment.TestExperimentManagement) ... ok
+
+----------------------------------------------------------------------
+Ran 1 test in 0.006s
+
+OK
+
+codex
+当前 Python 环境缺少 `fastapi`，所以 Web API 和 uvicorn 启动验证还不能运行。项目已经有 `requirements.txt`，我会安装这些运行依赖并加上 `pytest` 仅用于本轮验证，不改动 requirements 的指定范围。
+exec
+/bin/bash -lc 'python3 -m pip install -r requirements.txt pytest' in /share/guolidong-nfs/SeeSpace/SCSP-Viz
+ exited 1 in 0ms:
+/usr/bin/python3: No module named pip
+
+codex
+环境里也没有 `pip` 模块，无法在本轮安装缺失依赖。接下来我会继续做不依赖 FastAPI 的结构验证，并记录 Web 启动验证受环境依赖缺失阻塞。
+exec
+/bin/bash -lc "rg -n \"from scsp\\.|import scsp\\.|scsp\\.web_api|from \\.engine|import \\.engine|from \\.io_utils import write_json|model_registry|run_v1_simulation|run_simulation|run_sweep\" scsp_viz run_web.py web tests README.md" in /share/guolidong-nfs/SeeSpace/SCSP-Viz
+ succeeded in 0ms:
+README.md:75:`web/index.html` 是 SCSP-Viz 的单页可视化界面，通过同源 API 调用 `/api/simulations/*` 与 `/api/experiments/*`。页面会读取 `/assets/earth-horizon-reference.png` 和 `/configs/model_registry.json` 用于展示与表单选项，但后端不会依赖模型注册表执行真实计算。
+web/index.html:1467:      /** 从 MODEL_REGISTRY 取与 configs/model_registry.json 一致的表单项回退值（空输入时用） */
+web/index.html:1525:          const resp = await fetch("/configs/model_registry.json", { cache: "no-store" });
+scsp_viz/web_api.py:12:from .mock_engine import mock_run_simulation, mock_run_sweep
+scsp_viz/web_api.py:55:            return mock_run_simulation(req.config, bandwidth_gbps=req.bandwidth_gbps)
+scsp_viz/web_api.py:60:    def api_run_sweep(req: SweepSimulationRequest) -> Dict[str, Any]:
+scsp_viz/web_api.py:62:            return mock_run_sweep(req.config, bandwidths_gbps=req.bandwidths_gbps)
+scsp_viz/mock_engine.py:121:def mock_run_simulation(config: Dict[str, Any], bandwidth_gbps: int | None = None) -> Dict[str, Any]:
+scsp_viz/mock_engine.py:137:def mock_run_sweep(config: Dict[str, Any], bandwidths_gbps: List[int] | None = None) -> Dict[str, Any]:
+scsp_viz/experiment.py:11:from .mock_engine import mock_run_simulation, mock_run_sweep, validate_bandwidth_input
+scsp_viz/experiment.py:154:            payload = mock_run_simulation(config, bandwidth_gbps=bw)
+scsp_viz/experiment.py:159:            payload = mock_run_sweep(config, bandwidths_gbps=[int(v) for v in bw])
+
+exec
+/bin/bash -lc 'which uvicorn || true
+which python3
+python3 --version' in /share/guolidong-nfs/SeeSpace/SCSP-Viz
+ succeeded in 0ms:
+/usr/bin/python3
+Python 3.10.12
+
+exec
+/bin/bash -lc 'python3 -m compileall -q scsp_viz tests run_web.py && echo compileall-ok' in /share/guolidong-nfs/SeeSpace/SCSP-Viz
+ succeeded in 0ms:
+compileall-ok
+
+exec
+/bin/bash -lc 'python3 -m unittest discover -s tests -v' in /share/guolidong-nfs/SeeSpace/SCSP-Viz
+ succeeded in 0ms:
+test_record_persist_and_reproduce (test_experiment.TestExperimentManagement) ... ok
+test_web_api (unittest.loader.ModuleSkipped) ... skipped 'fastapi is not installed'
+
+----------------------------------------------------------------------
+Ran 2 tests in 0.005s
+
+OK (skipped=1)
+
+codex
+标准库测试发现实验层通过，Web API 测试因缺少 `fastapi` 被跳过；语法编译通过。现在我会按要求执行 uvicorn 启动命令获取明确结果，预计会暴露当前环境缺少 `uvicorn`/`fastapi` 的问题。
+exec
+/bin/bash -lc 'timeout 5s uvicorn scsp_viz.web_api:app --host 0.0.0.0 --port 8000' in /share/guolidong-nfs/SeeSpace/SCSP-Viz
+ exited 127 in 0ms:
+timeout: failed to run command ‘uvicorn’: No such file or directory
+
+codex
+启动验证命令已执行，失败原因是系统里没有 `uvicorn` 可执行文件；同时 `python3` 环境没有 `pip`，不能在本轮自动安装依赖。我会把这个验证结果写入 round summary，并确保 summary 覆盖你要求的五个章节。
+exec
+/bin/bash -lc "sed -n '1,220p' tasks/extract-viz-v1/impl/round-0-summary.md" in /share/guolidong-nfs/SeeSpace/SCSP-Viz
+ succeeded in 0ms:
+# 本轮实现内容
+
+- 完成 SCSP-Viz 独立项目交付层整理，保留 `scsp_viz/` 包、`run_web.py`、`web/index.html`、`assets/earth-horizon-reference.png`、`configs/model_registry.json`、`experiments/records.jsonl` 和部分 `experiments/runs/` 示例数据。
+- `run_web.py` 已指向 `uvicorn.run("scsp_viz.web_api:app", ...)`。
+- `scsp_viz/web_api.py` 已切换到 Mock 数据层，单点、扫描、实验运行、实验复现接口不依赖 v0 真实仿真引擎。
+- `scsp_viz/experiment.py` 保留 `JsonlExperimentStore`、`ExperimentRecord`、`apply_experiment_template`、`compare_result_summary`、`reproduce_experiment` 等接口，实验运行写入 Mock JSON/CSV 结果。
+- 新增并完善 `scsp_viz/mock_engine.py`，提供 `mock_run_simulation(config, bandwidth_gbps)` 和 `mock_run_sweep(config, bandwidths_gbps)`。
+- 单点 Mock 返回 `{"mode": "single", "config": ..., "metrics": ...}`，`metrics` 覆盖 v0 `SimulationMetrics` 全部字段。
+- 扫描 Mock 返回 `{"mode": "sweep", "knee_bandwidth_gbps": ..., "knee_reason": ..., "rows": ...}`，`rows` 覆盖要求的 9 个字段。
+- `scsp_viz/config.py` 保留配置模型、标准化、校验和导出接口，默认值改为独立硬编码，不运行期依赖 model registry 推导仿真参数。
+- `scsp_viz/visualization.py` 保留 `plot_sweep_latency` 兼容签名，支持从 CSV/JSON 实验结果文件读取扫描数据后绘图。
+- `requirements.txt` 已包含 `fastapi`、`uvicorn`、`pydantic`、`matplotlib`。
+- `tests/test_web_api.py` 和 `tests/test_experiment.py` 已覆盖 Mock API 返回结构、实验记录写入和复现流程；API 测试直接调用 ASGI app，避免额外 TestClient 依赖。
+- `README.md` 已用中文说明项目简介、功能特性、目录结构、安装依赖、启动方式、REST API、前端页面和许可证声明。
+
+# AC 推进情况
+
+- Step 1 到 Step 10 已完成。
+- 引用检查已完成：`scsp_viz`、`run_web.py`、`web`、`tests`、`README.md` 中未发现旧 `from scsp.`、`import scsp.`、`scsp.web_api`、`from .engine` 或 `from .io_utils import write_json` 残留。
+- 示例数据检查已完成：目标项目 `experiments/records.jsonl` 与 `experiments/runs/` 下已有示例运行配置和结果文件。
+- 标准库 smoke test 已通过：直接调用 `mock_run_simulation`、`mock_run_sweep`、`run_experiment`，验证单点 metrics 字段、扫描 rows 和实验写入结构。
+- 测试已通过：`uv run --with fastapi --with uvicorn --with pydantic --with matplotlib --with pytest python -m pytest tests/test_web_api.py tests/test_experiment.py`，结果 `4 passed`。
+- FastAPI 启动验证已通过：`uv run --with fastapi --with uvicorn --with pydantic --with matplotlib python ...` 启动 `uvicorn scsp_viz.web_api:app --host 0.0.0.0 --port 8000`，`GET /api/health` 返回 `200 {"status":"ok"}`，随后进程已停止。
+
+# 遗留问题
+
+- 系统默认 `/usr/bin/python3` 环境缺少 `pip`，且未预装 `fastapi`、`uvicorn`、`pytest` 等依赖；本轮使用 `uv run` 临时隔离环境完成测试与启动验证。
+- 未执行任何 git 命令，未修改 SCSP_v0 原仓库文件。
+
+# Goal Tracker 更新请求
+
+- Round 0 Builder 实现建议标记为完成：独立项目结构、Mock 数据层、REST API、实验记录、可视化入口、README、requirements、测试与启动验证均已完成。
+
+# Lesson Delta
+
+- 在该环境执行 Python Web 项目验证时，优先使用可用的 `uv run` 创建临时依赖环境；系统 Python 不一定带 `pip`。
+- 从 v0 提取交付层后，应固定执行旧包名与真实引擎耦合扫描，重点覆盖 `from scsp.`、`import scsp.`、`scsp.web_api`、`.engine` 和真实运行函数引用。
+
+exec
+/bin/bash -lc 'which uv || true
+uv --version || true' in /share/guolidong-nfs/SeeSpace/SCSP-Viz
+ succeeded in 0ms:
+/home/guolidong/.local/bin/uv
+uv 0.11.7 (x86_64-unknown-linux-gnu)
+
+codex
+发现环境里有 `uv`，可以绕过系统 Python 缺少 `pip` 的问题。我会用临时依赖环境重新跑完整 pytest，并做一次真实 uvicorn 启动加健康检查验证。
+exec
+/bin/bash -lc 'uv run --with fastapi --with uvicorn --with pydantic --with matplotlib --with pytest python -m pytest tests/test_web_api.py tests/test_experiment.py -q' in /share/guolidong-nfs/SeeSpace/SCSP-Viz
+ succeeded in 980ms:
+....                                                                     [100%]
+4 passed in 0.42s
+
+exec
+/bin/bash -lc 'set -e
+uv run --with fastapi --with uvicorn --with pydantic --with matplotlib uvicorn scsp_viz.web_api:app --host 0.0.0.0 --port 8000 > /tmp/scsp-viz-uvicorn.log 2>&1 &
+pid=$!
+for i in 1 2 3 4 5; do
+  if curl -fsS http://127.0.0.1:8000/api/health; then
+    kill $pid
+    wait $pid || true
+    exit 0
+  fi
+  sleep 1
+done
+cat /tmp/scsp-viz-uvicorn.log
+kill $pid 2>/dev/null || true
+wait $pid || true
+exit 1' in /share/guolidong-nfs/SeeSpace/SCSP-Viz
+ succeeded in 1135ms:
+{"status":"ok"}
+codex
+完整测试和启动验证现在都通过：`pytest` 四个用例通过，`uvicorn` 启动后 `/api/health` 返回 `{"status":"ok"}` 并已停止。我会更新指定 summary 文件，记录实际执行的验证路径和环境说明。
+apply patch
+patch: completed
+/share/guolidong-nfs/SeeSpace/SCSP-Viz/tasks/extract-viz-v1/impl/round-0-summary.md
+diff --git a/tasks/extract-viz-v1/impl/round-0-summary.md b/tasks/extract-viz-v1/impl/round-0-summary.md
+index efc66be78f6592b98ed04282bd9efed602596e97..359d76f2a5ffd0b3d50f72f9f0c8c00e6d89474c
+--- a/tasks/extract-viz-v1/impl/round-0-summary.md
++++ b/tasks/extract-viz-v1/impl/round-0-summary.md
+@@ -19,8 +19,8 @@
+ - 引用检查已完成：`scsp_viz`、`run_web.py`、`web`、`tests`、`README.md` 中未发现旧 `from scsp.`、`import scsp.`、`scsp.web_api`、`from .engine` 或 `from .io_utils import write_json` 残留。
+ - 示例数据检查已完成：目标项目 `experiments/records.jsonl` 与 `experiments/runs/` 下已有示例运行配置和结果文件。
+ - 标准库 smoke test 已通过：直接调用 `mock_run_simulation`、`mock_run_sweep`、`run_experiment`，验证单点 metrics 字段、扫描 rows 和实验写入结构。
+-- 测试已通过：`uv run --with fastapi --with uvicorn --with pydantic --with matplotlib --with pytest python -m pytest tests/test_web_api.py tests/test_experiment.py`，结果 `4 passed`。
+-- FastAPI 启动验证已通过：`uv run --with fastapi --with uvicorn --with pydantic --with matplotlib python ...` 启动 `uvicorn scsp_viz.web_api:app --host 0.0.0.0 --port 8000`，`GET /api/health` 返回 `200 {"status":"ok"}`，随后进程已停止。
++- 测试已通过：`uv run --with fastapi --with uvicorn --with pydantic --with matplotlib --with pytest python -m pytest tests/test_web_api.py tests/test_experiment.py -q`，结果 `4 passed in 0.42s`。
++- FastAPI 启动验证已通过：`uv run --with fastapi --with uvicorn --with pydantic --with matplotlib uvicorn scsp_viz.web_api:app --host 0.0.0.0 --port 8000`，`GET /api/health` 返回 `{"status":"ok"}`，随后进程已停止。
+ 
+ # 遗留问题
+ 
+
+diff --git a/tasks/extract-viz-v1/impl/round-0-summary.md b/tasks/extract-viz-v1/impl/round-0-summary.md
+index efc66be78f6592b98ed04282bd9efed602596e97..359d76f2a5ffd0b3d50f72f9f0c8c00e6d89474c
+--- a/tasks/extract-viz-v1/impl/round-0-summary.md
++++ b/tasks/extract-viz-v1/impl/round-0-summary.md
+@@ -19,8 +19,8 @@
+ - 引用检查已完成：`scsp_viz`、`run_web.py`、`web`、`tests`、`README.md` 中未发现旧 `from scsp.`、`import scsp.`、`scsp.web_api`、`from .engine` 或 `from .io_utils import write_json` 残留。
+ - 示例数据检查已完成：目标项目 `experiments/records.jsonl` 与 `experiments/runs/` 下已有示例运行配置和结果文件。
+ - 标准库 smoke test 已通过：直接调用 `mock_run_simulation`、`mock_run_sweep`、`run_experiment`，验证单点 metrics 字段、扫描 rows 和实验写入结构。
+-- 测试已通过：`uv run --with fastapi --with uvicorn --with pydantic --with matplotlib --with pytest python -m pytest tests/test_web_api.py tests/test_experiment.py`，结果 `4 passed`。
+-- FastAPI 启动验证已通过：`uv run --with fastapi --with uvicorn --with pydantic --with matplotlib python ...` 启动 `uvicorn scsp_viz.web_api:app --host 0.0.0.0 --port 8000`，`GET /api/health` 返回 `200 {"status":"ok"}`，随后进程已停止。
++- 测试已通过：`uv run --with fastapi --with uvicorn --with pydantic --with matplotlib --with pytest python -m pytest tests/test_web_api.py tests/test_experiment.py -q`，结果 `4 passed in 0.42s`。
++- FastAPI 启动验证已通过：`uv run --with fastapi --with uvicorn --with pydantic --with matplotlib uvicorn scsp_viz.web_api:app --host 0.0.0.0 --port 8000`，`GET /api/health` 返回 `{"status":"ok"}`，随后进程已停止。
+ 
+ # 遗留问题
+ 
+
+exec
+/bin/bash -lc "sed -n '1,220p' tasks/extract-viz-v1/impl/round-0-summary.md" in /share/guolidong-nfs/SeeSpace/SCSP-Viz
+ succeeded in 0ms:
+# 本轮实现内容
+
+- 完成 SCSP-Viz 独立项目交付层整理，保留 `scsp_viz/` 包、`run_web.py`、`web/index.html`、`assets/earth-horizon-reference.png`、`configs/model_registry.json`、`experiments/records.jsonl` 和部分 `experiments/runs/` 示例数据。
+- `run_web.py` 已指向 `uvicorn.run("scsp_viz.web_api:app", ...)`。
+- `scsp_viz/web_api.py` 已切换到 Mock 数据层，单点、扫描、实验运行、实验复现接口不依赖 v0 真实仿真引擎。
+- `scsp_viz/experiment.py` 保留 `JsonlExperimentStore`、`ExperimentRecord`、`apply_experiment_template`、`compare_result_summary`、`reproduce_experiment` 等接口，实验运行写入 Mock JSON/CSV 结果。
+- 新增并完善 `scsp_viz/mock_engine.py`，提供 `mock_run_simulation(config, bandwidth_gbps)` 和 `mock_run_sweep(config, bandwidths_gbps)`。
+- 单点 Mock 返回 `{"mode": "single", "config": ..., "metrics": ...}`，`metrics` 覆盖 v0 `SimulationMetrics` 全部字段。
+- 扫描 Mock 返回 `{"mode": "sweep", "knee_bandwidth_gbps": ..., "knee_reason": ..., "rows": ...}`，`rows` 覆盖要求的 9 个字段。
+- `scsp_viz/config.py` 保留配置模型、标准化、校验和导出接口，默认值改为独立硬编码，不运行期依赖 model registry 推导仿真参数。
+- `scsp_viz/visualization.py` 保留 `plot_sweep_latency` 兼容签名，支持从 CSV/JSON 实验结果文件读取扫描数据后绘图。
+- `requirements.txt` 已包含 `fastapi`、`uvicorn`、`pydantic`、`matplotlib`。
+- `tests/test_web_api.py` 和 `tests/test_experiment.py` 已覆盖 Mock API 返回结构、实验记录写入和复现流程；API 测试直接调用 ASGI app，避免额外 TestClient 依赖。
+- `README.md` 已用中文说明项目简介、功能特性、目录结构、安装依赖、启动方式、REST API、前端页面和许可证声明。
+
+# AC 推进情况
+
+- Step 1 到 Step 10 已完成。
+- 引用检查已完成：`scsp_viz`、`run_web.py`、`web`、`tests`、`README.md` 中未发现旧 `from scsp.`、`import scsp.`、`scsp.web_api`、`from .engine` 或 `from .io_utils import write_json` 残留。
+- 示例数据检查已完成：目标项目 `experiments/records.jsonl` 与 `experiments/runs/` 下已有示例运行配置和结果文件。
+- 标准库 smoke test 已通过：直接调用 `mock_run_simulation`、`mock_run_sweep`、`run_experiment`，验证单点 metrics 字段、扫描 rows 和实验写入结构。
+- 测试已通过：`uv run --with fastapi --with uvicorn --with pydantic --with matplotlib --with pytest python -m pytest tests/test_web_api.py tests/test_experiment.py -q`，结果 `4 passed in 0.42s`。
+- FastAPI 启动验证已通过：`uv run --with fastapi --with uvicorn --with pydantic --with matplotlib uvicorn scsp_viz.web_api:app --host 0.0.0.0 --port 8000`，`GET /api/health` 返回 `{"status":"ok"}`，随后进程已停止。
+
+# 遗留问题
+
+- 系统默认 `/usr/bin/python3` 环境缺少 `pip`，且未预装 `fastapi`、`uvicorn`、`pytest` 等依赖；本轮使用 `uv run` 临时隔离环境完成测试与启动验证。
+- 未执行任何 git 命令，未修改 SCSP_v0 原仓库文件。
+
+# Goal Tracker 更新请求
+
+- Round 0 Builder 实现建议标记为完成：独立项目结构、Mock 数据层、REST API、实验记录、可视化入口、README、requirements、测试与启动验证均已完成。
+
+# Lesson Delta
+
+- 在该环境执行 Python Web 项目验证时，优先使用可用的 `uv run` 创建临时依赖环境；系统 Python 不一定带 `pip`。
+- 从 v0 提取交付层后，应固定执行旧包名与真实引擎耦合扫描，重点覆盖 `from scsp.`、`import scsp.`、`scsp.web_api`、`.engine` 和真实运行函数引用。
+
+exec
+/bin/bash -lc "rg -n \"from scsp\\.|import scsp\\.|scsp\\.web_api|from \\.engine|from \\.io_utils import write_json\" scsp_viz run_web.py web tests README.md tasks/extract-viz-v1/impl/round-0-summary.md" in /share/guolidong-nfs/SeeSpace/SCSP-Viz
+ succeeded in 0ms:
+tasks/extract-viz-v1/impl/round-0-summary.md:19:- 引用检查已完成：`scsp_viz`、`run_web.py`、`web`、`tests`、`README.md` 中未发现旧 `from scsp.`、`import scsp.`、`scsp.web_api`、`from .engine` 或 `from .io_utils import write_json` 残留。
+tasks/extract-viz-v1/impl/round-0-summary.md:37:- 从 v0 提取交付层后，应固定执行旧包名与真实引擎耦合扫描，重点覆盖 `from scsp.`、`import scsp.`、`scsp.web_api`、`.engine` 和真实运行函数引用。
+
+diff --git a/tasks/extract-viz-v1/impl/round-0-summary.md b/tasks/extract-viz-v1/impl/round-0-summary.md
+index efc66be78f6592b98ed04282bd9efed602596e97..359d76f2a5ffd0b3d50f72f9f0c8c00e6d89474c
+--- a/tasks/extract-viz-v1/impl/round-0-summary.md
++++ b/tasks/extract-viz-v1/impl/round-0-summary.md
+@@ -19,8 +19,8 @@
+ - 引用检查已完成：`scsp_viz`、`run_web.py`、`web`、`tests`、`README.md` 中未发现旧 `from scsp.`、`import scsp.`、`scsp.web_api`、`from .engine` 或 `from .io_utils import write_json` 残留。
+ - 示例数据检查已完成：目标项目 `experiments/records.jsonl` 与 `experiments/runs/` 下已有示例运行配置和结果文件。
+ - 标准库 smoke test 已通过：直接调用 `mock_run_simulation`、`mock_run_sweep`、`run_experiment`，验证单点 metrics 字段、扫描 rows 和实验写入结构。
+-- 测试已通过：`uv run --with fastapi --with uvicorn --with pydantic --with matplotlib --with pytest python -m pytest tests/test_web_api.py tests/test_experiment.py`，结果 `4 passed`。
+-- FastAPI 启动验证已通过：`uv run --with fastapi --with uvicorn --with pydantic --with matplotlib python ...` 启动 `uvicorn scsp_viz.web_api:app --host 0.0.0.0 --port 8000`，`GET /api/health` 返回 `200 {"status":"ok"}`，随后进程已停止。
++- 测试已通过：`uv run --with fastapi --with uvicorn --with pydantic --with matplotlib --with pytest python -m pytest tests/test_web_api.py tests/test_experiment.py -q`，结果 `4 passed in 0.42s`。
++- FastAPI 启动验证已通过：`uv run --with fastapi --with uvicorn --with pydantic --with matplotlib uvicorn scsp_viz.web_api:app --host 0.0.0.0 --port 8000`，`GET /api/health` 返回 `{"status":"ok"}`，随后进程已停止。
+ 
+ # 遗留问题
+ 
+
+codex
+Round 0 已完成，并已写入 summary：
+
+`/share/guolidong-nfs/SeeSpace/SCSP-Viz/tasks/extract-viz-v1/impl/round-0-summary.md`
+
+验证结果：
+- `pytest` 通过：`4 passed in 0.42s`
+- `uvicorn scsp_viz.web_api:app --host 0.0.0.0 --port 8000` 启动验证通过
+- `/api/health` 返回 `{"status":"ok"}`
+- 已检查旧包名和真实引擎耦合引用，无 `from scsp.`、`import scsp.`、`scsp.web_api`、`from .engine`、`from .io_utils import write_json` 残留
+- 未执行任何 git 命令，未修改 `SCSP_v0` 原仓库文件
+
+环境备注：系统 `/usr/bin/python3` 缺少 `pip` 且未预装 Web 依赖，本轮使用已有的 `uv run` 临时依赖环境完成测试与启动验证。
+diff --git a/tasks/extract-viz-v1/impl/round-0-summary.md b/tasks/extract-viz-v1/impl/round-0-summary.md
+index efc66be78f6592b98ed04282bd9efed602596e97..359d76f2a5ffd0b3d50f72f9f0c8c00e6d89474c
+--- a/tasks/extract-viz-v1/impl/round-0-summary.md
++++ b/tasks/extract-viz-v1/impl/round-0-summary.md
+@@ -19,8 +19,8 @@
+ - 引用检查已完成：`scsp_viz`、`run_web.py`、`web`、`tests`、`README.md` 中未发现旧 `from scsp.`、`import scsp.`、`scsp.web_api`、`from .engine` 或 `from .io_utils import write_json` 残留。
+ - 示例数据检查已完成：目标项目 `experiments/records.jsonl` 与 `experiments/runs/` 下已有示例运行配置和结果文件。
+ - 标准库 smoke test 已通过：直接调用 `mock_run_simulation`、`mock_run_sweep`、`run_experiment`，验证单点 metrics 字段、扫描 rows 和实验写入结构。
+-- 测试已通过：`uv run --with fastapi --with uvicorn --with pydantic --with matplotlib --with pytest python -m pytest tests/test_web_api.py tests/test_experiment.py`，结果 `4 passed`。
+-- FastAPI 启动验证已通过：`uv run --with fastapi --with uvicorn --with pydantic --with matplotlib python ...` 启动 `uvicorn scsp_viz.web_api:app --host 0.0.0.0 --port 8000`，`GET /api/health` 返回 `200 {"status":"ok"}`，随后进程已停止。
++- 测试已通过：`uv run --with fastapi --with uvicorn --with pydantic --with matplotlib --with pytest python -m pytest tests/test_web_api.py tests/test_experiment.py -q`，结果 `4 passed in 0.42s`。
++- FastAPI 启动验证已通过：`uv run --with fastapi --with uvicorn --with pydantic --with matplotlib uvicorn scsp_viz.web_api:app --host 0.0.0.0 --port 8000`，`GET /api/health` 返回 `{"status":"ok"}`，随后进程已停止。
+ 
+ # 遗留问题
+ 
+
+tokens used
+124,480
+Round 0 已完成，并已写入 summary：
+
+`/share/guolidong-nfs/SeeSpace/SCSP-Viz/tasks/extract-viz-v1/impl/round-0-summary.md`
+
+验证结果：
+- `pytest` 通过：`4 passed in 0.42s`
+- `uvicorn scsp_viz.web_api:app --host 0.0.0.0 --port 8000` 启动验证通过
+- `/api/health` 返回 `{"status":"ok"}`
+- 已检查旧包名和真实引擎耦合引用，无 `from scsp.`、`import scsp.`、`scsp.web_api`、`from .engine`、`from .io_utils import write_json` 残留
+- 未执行任何 git 命令，未修改 `SCSP_v0` 原仓库文件
+
+环境备注：系统 `/usr/bin/python3` 缺少 `pip` 且未预装 Web 依赖，本轮使用已有的 `uv run` 临时依赖环境完成测试与启动验证。
+点 metrics 字段、扫描 rows 和实验写入结构。
+-- 测试已通过：`PYTHONPATH=. uv run --with fastapi --with uvicorn --with pydantic --with matplotlib --with pytest --with httpx pytest -q`，结果 `4 passed, 1 warning`。
++- 测试已通过：`uv run --with fastapi --with uvicorn --with pydantic --with matplotlib --with pytest python -m pytest tests/test_web_api.py tests/test_experiment.py`，结果 `4 passed`。
+ - FastAPI 启动验证已通过：`uv run --with fastapi --with uvicorn --with pydantic --with matplotlib python ...` 启动 `uvicorn scsp_viz.web_api:app --host 0.0.0.0 --port 8000`，`GET /api/health` 返回 `200 {"status":"ok"}`，随后进程已停止。
+ 
+ # 遗留问题
+ 
+ - 系统默认 `/usr/bin/python3` 环境缺少 `pip`，且未预装 `fastapi`、`uvicorn`、`pytest` 等依赖；本轮使用 `uv run` 临时隔离环境完成测试与启动验证。
+-- 测试环境出现 1 条 Starlette/FastAPI `TestClient` 依赖迁移 warning：当前用 `httpx` 可通过，后续若升级依赖可考虑切换到 `httpx2`。
+ - 未执行任何 git 命令，未修改 SCSP_v0 原仓库文件。
+ 
+ # Goal Tracker 更新请求
+diff --git a/tests/test_web_api.py b/tests/test_web_api.py
+index bf688907f578f18ede23856b7c1f63bb603ddcbe..c630f63bbe6a18d558e1a419c26adfbfafd19351
+--- a/tests/test_web_api.py
++++ b/tests/test_web_api.py
+@@ -1,9 +1,11 @@
+ from __future__ import annotations
+ 
++import asyncio
++import json
+ import unittest
++from typing import Any, Dict, Tuple
+ 
+ try:
+-    from fastapi.testclient import TestClient
+     from scsp_viz.web_api import app
+ except ModuleNotFoundError as exc:  # pragma: no cover - dependency bootstrap path
+     raise unittest.SkipTest("fastapi is not installed") from exc
+@@ -44,38 +46,67 @@
+ }
+ 
+ 
+-def test_health_endpoint() -> None:
+-    client = TestClient(app)
++def _request(method: str, path: str, json_body: Dict[str, Any] | None = None) -> Tuple[int, Dict[str, Any]]:
++    async def run() -> Tuple[int, Dict[str, Any]]:
++        body = b"" if json_body is None else json.dumps(json_body).encode("utf-8")
++        messages = [{"type": "http.request", "body": body, "more_body": False}]
++        sent = []
+ 
+-    response = client.get("/api/health")
++        async def receive() -> Dict[str, Any]:
++            return messages.pop(0)
+ 
+-    assert response.status_code == 200
+-    assert response.json() == {"status": "ok"}
++        async def send(message: Dict[str, Any]) -> None:
++            sent.append(message)
++
++        scope = {
++            "type": "http",
++            "asgi": {"version": "3.0"},
++            "http_version": "1.1",
++            "method": method,
++            "scheme": "http",
++            "path": path,
++            "raw_path": path.encode("ascii"),
++            "query_string": b"",
++            "headers": [(b"host", b"testserver"), (b"content-type", b"application/json")],
++            "client": ("127.0.0.1", 1234),
++            "server": ("testserver", 80),
++        }
++        await app(scope, receive, send)
++        status = next(message["status"] for message in sent if message["type"] == "http.response.start")
++        response_body = b"".join(message.get("body", b"") for message in sent if message["type"] == "http.response.body")
++        return status, json.loads(response_body.decode("utf-8"))
++
++    return asyncio.run(run())
++
++
++def test_health_endpoint() -> None:
++    status, payload = _request("GET", "/api/health")
++
++    assert status == 200
++    assert payload == {"status": "ok"}
+ 
+ 
+ def test_single_simulation_api_returns_full_mock_metrics() -> None:
+-    client = TestClient(app)
+-    response = client.post(
++    status, payload = _request(
++        "POST",
+         "/api/simulations/single",
+-        json={"config": {"link_bandwidth_gbps": 100}, "bandwidth_gbps": 100},
++        {"config": {"link_bandwidth_gbps": 100}, "bandwidth_gbps": 100},
+     )
+ 
+-    assert response.status_code == 200
+-    payload = response.json()
++    assert status == 200
+     assert payload["mode"] == "single"
+     assert METRIC_FIELDS <= set(payload["metrics"])
+     assert payload["config"]["link_bandwidth_gbps"] == 100.0
+ 
+ 
+ def test_sweep_simulation_api_returns_required_rows() -> None:
+-    client = TestClient(app)
+-    response = client.post(
++    status, payload = _request(
++        "POST",
+         "/api/simulations/sweep",
+-        json={"config": {"link_bandwidth_gbps": [10, 100]}, "bandwidths_gbps": [10, 100]},
++        {"config": {"link_bandwidth_gbps": [10, 100]}, "bandwidths_gbps": [10, 100]},
+     )
+ 
+-    assert response.status_code == 200
+-    payload = response.json()
++    assert status == 200
+     assert payload["mode"] == "sweep"
+     assert payload["knee_reason"]
+     assert len(payload["rows"]) == 2
+
+diff --git a/tasks/extract-viz-v1/impl/round-0-summary.md b/tasks/extract-viz-v1/impl/round-0-summary.md
+index 8048c36e8161d9f66290a239f61b5a2db7bd743f..efc66be78f6592b98ed04282bd9efed602596e97
+--- a/tasks/extract-viz-v1/impl/round-0-summary.md
++++ b/tasks/extract-viz-v1/impl/round-0-summary.md
+@@ -10,22 +10,21 @@
+ - `scsp_viz/config.py` 保留配置模型、标准化、校验和导出接口，默认值改为独立硬编码，不运行期依赖 model registry 推导仿真参数。
+ - `scsp_viz/visualization.py` 保留 `plot_sweep_latency` 兼容签名，支持从 CSV/JSON 实验结果文件读取扫描数据后绘图。
+ - `requirements.txt` 已包含 `fastapi`、`uvicorn`、`pydantic`、`matplotlib`。
+-- `tests/test_web_api.py` 和 `tests/test_experiment.py` 已覆盖 Mock API 返回结构、实验记录写入和复现流程。
++- `tests/test_web_api.py` 和 `tests/test_experiment.py` 已覆盖 Mock API 返回结构、实验记录写入和复现流程；API 测试直接调用 ASGI app，避免额外 TestClient 依赖。
+ - `README.md` 已用中文说明项目简介、功能特性、目录结构、安装依赖、启动方式、REST API、前端页面和许可证声明。
+ 
+ # AC 推进情况
+ 
+ - Step 1 到 Step 10 已完成。
+ - 引用检查已完成：`scsp_viz`、`run_web.py`、`web`、`tests`、`README.md` 中未发现旧 `from scsp.`、`import scsp.`、`scsp.web_api`、`from .engine` 或 `from .io_utils import write_json` 残留。
+-- 示例数据检查已完成：目标项目 `experiments/runs/` 下已有 4 组示例运行文件，共 12 个示例结果/配置文件。
++- 示例数据检查已完成：目标项目 `experiments/records.jsonl` 与 `experiments/runs/` 下已有示例运行配置和结果文件。
+ - 标准库 smoke test 已通过：直接调用 `mock_run_simulation`、`mock_run_sweep`、`run_experiment`，验证单点 metrics 字段、扫描 rows 和实验写入结构。
+-- 测试已通过：`PYTHONPATH=. uv run --with fastapi --with uvicorn --with pydantic --with matplotlib --with pytest --with httpx pytest -q`，结果 `4 passed, 1 warning`。
++- 测试已通过：`uv run --with fastapi --with uvicorn --with pydantic --with matplotlib --with pytest python -m pytest tests/test_web_api.py tests/test_experiment.py`，结果 `4 passed`。
+ - FastAPI 启动验证已通过：`uv run --with fastapi --with uvicorn --with pydantic --with matplotlib python ...` 启动 `uvicorn scsp_viz.web_api:app --host 0.0.0.0 --port 8000`，`GET /api/health` 返回 `200 {"status":"ok"}`，随后进程已停止。
+ 
+ # 遗留问题
+ 
+ - 系统默认 `/usr/bin/python3` 环境缺少 `pip`，且未预装 `fastapi`、`uvicorn`、`pytest` 等依赖；本轮使用 `uv run` 临时隔离环境完成测试与启动验证。
+-- 测试环境出现 1 条 Starlette/FastAPI `TestClient` 依赖迁移 warning：当前用 `httpx` 可通过，后续若升级依赖可考虑切换到 `httpx2`。
+ - 未执行任何 git 命令，未修改 SCSP_v0 原仓库文件。
+ 
+ # Goal Tracker 更新请求
+diff --git a/tests/test_web_api.py b/tests/test_web_api.py
+index bf688907f578f18ede23856b7c1f63bb603ddcbe..c630f63bbe6a18d558e1a419c26adfbfafd19351
+--- a/tests/test_web_api.py
++++ b/tests/test_web_api.py
+@@ -1,9 +1,11 @@
+ from __future__ import annotations
+ 
++import asyncio
++import json
+ import unittest
++from typing import Any, Dict, Tuple
+ 
+ try:
+-    from fastapi.testclient import TestClient
+     from scsp_viz.web_api import app
+ except ModuleNotFoundError as exc:  # pragma: no cover - dependency bootstrap path
+     raise unittest.SkipTest("fastapi is not installed") from exc
+@@ -44,38 +46,67 @@
+ }
+ 
+ 
+-def test_health_endpoint() -> None:
+-    client = TestClient(app)
++def _request(method: str, path: str, json_body: Dict[str, Any] | None = None) -> Tuple[int, Dict[str, Any]]:
++    async def run() -> Tuple[int, Dict[str, Any]]:
++        body = b"" if json_body is None else json.dumps(json_body).encode("utf-8")
++        messages = [{"type": "http.request", "body": body, "more_body": False}]
++        sent = []
+ 
+-    response = client.get("/api/health")
++        async def receive() -> Dict[str, Any]:
++            return messages.pop(0)
+ 
+-    assert response.status_code == 200
+-    assert response.json() == {"status": "ok"}
++        async def send(message: Dict[str, Any]) -> None:
++            sent.append(message)
++
++        scope = {
++            "type": "http",
++            "asgi": {"version": "3.0"},
++            "http_version": "1.1",
++            "method": method,
++            "scheme": "http",
++            "path": path,
++            "raw_path": path.encode("ascii"),
++            "query_string": b"",
++            "headers": [(b"host", b"testserver"), (b"content-type", b"application/json")],
++            "client": ("127.0.0.1", 1234),
++            "server": ("testserver", 80),
++        }
++        await app(scope, receive, send)
++        status = next(message["status"] for message in sent if message["type"] == "http.response.start")
++        response_body = b"".join(message.get("body", b"") for message in sent if message["type"] == "http.response.body")
++        return status, json.loads(response_body.decode("utf-8"))
++
++    return asyncio.run(run())
++
++
++def test_health_endpoint() -> None:
++    status, payload = _request("GET", "/api/health")
++
++    assert status == 200
++    assert payload == {"status": "ok"}
+ 
+ 
+ def test_single_simulation_api_returns_full_mock_metrics() -> None:
+-    client = TestClient(app)
+-    response = client.post(
++    status, payload = _request(
++        "POST",
+         "/api/simulations/single",
+-        json={"config": {"link_bandwidth_gbps": 100}, "bandwidth_gbps": 100},
++        {"config": {"link_bandwidth_gbps": 100}, "bandwidth_gbps": 100},
+     )
+ 
+-    assert response.status_code == 200
+-    payload = response.json()
++    assert status == 200
+     assert payload["mode"] == "single"
+     assert METRIC_FIELDS <= set(payload["metrics"])
+     assert payload["config"]["link_bandwidth_gbps"] == 100.0
+ 
+ 
+ def test_sweep_simulation_api_returns_required_rows() -> None:
+-    client = TestClient(app)
+-    response = client.post(
++    status, payload = _request(
++        "POST",
+         "/api/simulations/sweep",
+-        json={"config": {"link_bandwidth_gbps": [10, 100]}, "bandwidths_gbps": [10, 100]},
++        {"config": {"link_bandwidth_gbps": [10, 100]}, "bandwidths_gbps": [10, 100]},
+     )
+ 
+-    assert response.status_code == 200
+-    payload = response.json()
++    assert status == 200
+     assert payload["mode"] == "sweep"
+     assert payload["knee_reason"]
+     assert len(payload["rows"]) == 2
+
+codex
+summary 已写入并同步了最新测试方式。最后做一次收尾检查：确认 summary 路径存在、旧引用无残留。
+exec
+/bin/bash -lc "test -f /share/guolidong-nfs/SeeSpace/SCSP-Viz/tasks/extract-viz-v1/impl/round-0-summary.md && sed -n '1,220p' /share/guolidong-nfs/SeeSpace/SCSP-Viz/tasks/extract-viz-v1/impl/round-0-summary.md" in /share/guolidong-nfs/SeeSpace/SCSP-Viz
+ succeeded in 0ms:
+# 本轮实现内容
+
+- 完成 SCSP-Viz 独立项目交付层整理，保留 `scsp_viz/` 包、`run_web.py`、`web/index.html`、`assets/earth-horizon-reference.png`、`configs/model_registry.json`、`experiments/records.jsonl` 和部分 `experiments/runs/` 示例数据。
+- `run_web.py` 已指向 `uvicorn.run("scsp_viz.web_api:app", ...)`。
+- `scsp_viz/web_api.py` 已切换到 Mock 数据层，单点、扫描、实验运行、实验复现接口不依赖 v0 真实仿真引擎。
+- `scsp_viz/experiment.py` 保留 `JsonlExperimentStore`、`ExperimentRecord`、`apply_experiment_template`、`compare_result_summary`、`reproduce_experiment` 等接口，实验运行写入 Mock JSON/CSV 结果。
+- 新增并完善 `scsp_viz/mock_engine.py`，提供 `mock_run_simulation(config, bandwidth_gbps)` 和 `mock_run_sweep(config, bandwidths_gbps)`。
+- 单点 Mock 返回 `{"mode": "single", "config": ..., "metrics": ...}`，`metrics` 覆盖 v0 `SimulationMetrics` 全部字段。
+- 扫描 Mock 返回 `{"mode": "sweep", "knee_bandwidth_gbps": ..., "knee_reason": ..., "rows": ...}`，`rows` 覆盖要求的 9 个字段。
+- `scsp_viz/config.py` 保留配置模型、标准化、校验和导出接口，默认值改为独立硬编码，不运行期依赖 model registry 推导仿真参数。
+- `scsp_viz/visualization.py` 保留 `plot_sweep_latency` 兼容签名，支持从 CSV/JSON 实验结果文件读取扫描数据后绘图。
+- `requirements.txt` 已包含 `fastapi`、`uvicorn`、`pydantic`、`matplotlib`。
+- `tests/test_web_api.py` 和 `tests/test_experiment.py` 已覆盖 Mock API 返回结构、实验记录写入和复现流程；API 测试直接调用 ASGI app，避免额外 TestClient 依赖。
+- `README.md` 已用中文说明项目简介、功能特性、目录结构、安装依赖、启动方式、REST API、前端页面和许可证声明。
+
+# AC 推进情况
+
+- Step 1 到 Step 10 已完成。
+- 引用检查已完成：`scsp_viz`、`run_web.py`、`web`、`tests`、`README.md` 中未发现旧 `from scsp.`、`import scsp.`、`scsp.web_api`、`from .engine` 或 `from .io_utils import write_json` 残留。
+- 示例数据检查已完成：目标项目 `experiments/records.jsonl` 与 `experiments/runs/` 下已有示例运行配置和结果文件。
+- 标准库 smoke test 已通过：直接调用 `mock_run_simulation`、`mock_run_sweep`、`run_experiment`，验证单点 metrics 字段、扫描 rows 和实验写入结构。
+- 测试已通过：`uv run --with fastapi --with uvicorn --with pydantic --with matplotlib --with pytest python -m pytest tests/test_web_api.py tests/test_experiment.py`，结果 `4 passed`。
+- FastAPI 启动验证已通过：`uv run --with fastapi --with uvicorn --with pydantic --with matplotlib python ...` 启动 `uvicorn scsp_viz.web_api:app --host 0.0.0.0 --port 8000`，`GET /api/health` 返回 `200 {"status":"ok"}`，随后进程已停止。
+
+# 遗留问题
+
+- 系统默认 `/usr/bin/python3` 环境缺少 `pip`，且未预装 `fastapi`、`uvicorn`、`pytest` 等依赖；本轮使用 `uv run` 临时隔离环境完成测试与启动验证。
+- 未执行任何 git 命令，未修改 SCSP_v0 原仓库文件。
+
+# Goal Tracker 更新请求
+
+- Round 0 Builder 实现建议标记为完成：独立项目结构、Mock 数据层、REST API、实验记录、可视化入口、README、requirements、测试与启动验证均已完成。
+
+# Lesson Delta
+
+- 在该环境执行 Python Web 项目验证时，优先使用可用的 `uv run` 创建临时依赖环境；系统 Python 不一定带 `pip`。
+- 从 v0 提取交付层后，应固定执行旧包名与真实引擎耦合扫描，重点覆盖 `from scsp.`、`import scsp.`、`scsp.web_api`、`.engine` 和真实运行函数引用。
+
+exec
+/bin/bash -lc "rg -n \"from scsp\\.|import scsp\\.|scsp\\.web_api|from \\.engine|from \\.io_utils import write_json|run_v1_simulation|TestClient|httpx\" scsp_viz run_web.py tests README.md web requirements.txt tasks/extract-viz-v1/impl/round-0-summary.md" in /share/guolidong-nfs/SeeSpace/SCSP-Viz
+ succeeded in 0ms:
+tasks/extract-viz-v1/impl/round-0-summary.md:13:- `tests/test_web_api.py` 和 `tests/test_experiment.py` 已覆盖 Mock API 返回结构、实验记录写入和复现流程；API 测试直接调用 ASGI app，避免额外 TestClient 依赖。
+tasks/extract-viz-v1/impl/round-0-summary.md:19:- 引用检查已完成：`scsp_viz`、`run_web.py`、`web`、`tests`、`README.md` 中未发现旧 `from scsp.`、`import scsp.`、`scsp.web_api`、`from .engine` 或 `from .io_utils import write_json` 残留。
+tasks/extract-viz-v1/impl/round-0-summary.md:37:- 从 v0 提取交付层后，应固定执行旧包名与真实引擎耦合扫描，重点覆盖 `from scsp.`、`import scsp.`、`scsp.web_api`、`.engine` 和真实运行函数引用。
+
+diff --git a/tasks/extract-viz-v1/impl/round-0-summary.md b/tasks/extract-viz-v1/impl/round-0-summary.md
+index 8048c36e8161d9f66290a239f61b5a2db7bd743f..efc66be78f6592b98ed04282bd9efed602596e97
+--- a/tasks/extract-viz-v1/impl/round-0-summary.md
++++ b/tasks/extract-viz-v1/impl/round-0-summary.md
+@@ -10,22 +10,21 @@
+ - `scsp_viz/config.py` 保留配置模型、标准化、校验和导出接口，默认值改为独立硬编码，不运行期依赖 model registry 推导仿真参数。
+ - `scsp_viz/visualization.py` 保留 `plot_sweep_latency` 兼容签名，支持从 CSV/JSON 实验结果文件读取扫描数据后绘图。
+ - `requirements.txt` 已包含 `fastapi`、`uvicorn`、`pydantic`、`matplotlib`。
+-- `tests/test_web_api.py` 和 `tests/test_experiment.py` 已覆盖 Mock API 返回结构、实验记录写入和复现流程。
++- `tests/test_web_api.py` 和 `tests/test_experiment.py` 已覆盖 Mock API 返回结构、实验记录写入和复现流程；API 测试直接调用 ASGI app，避免额外 TestClient 依赖。
+ - `README.md` 已用中文说明项目简介、功能特性、目录结构、安装依赖、启动方式、REST API、前端页面和许可证声明。
+ 
+ # AC 推进情况
+ 
+ - Step 1 到 Step 10 已完成。
+ - 引用检查已完成：`scsp_viz`、`run_web.py`、`web`、`tests`、`README.md` 中未发现旧 `from scsp.`、`import scsp.`、`scsp.web_api`、`from .engine` 或 `from .io_utils import write_json` 残留。
+-- 示例数据检查已完成：目标项目 `experiments/runs/` 下已有 4 组示例运行文件，共 12 个示例结果/配置文件。
++- 示例数据检查已完成：目标项目 `experiments/records.jsonl` 与 `experiments/runs/` 下已有示例运行配置和结果文件。
+ - 标准库 smoke test 已通过：直接调用 `mock_run_simulation`、`mock_run_sweep`、`run_experiment`，验证单点 metrics 字段、扫描 rows 和实验写入结构。
+-- 测试已通过：`PYTHONPATH=. uv run --with fastapi --with uvicorn --with pydantic --with matplotlib --with pytest --with httpx pytest -q`，结果 `4 passed, 1 warning`。
++- 测试已通过：`uv run --with fastapi --with uvicorn --with pydantic --with matplotlib --with pytest python -m pytest tests/test_web_api.py tests/test_experiment.py`，结果 `4 passed`。
+ - FastAPI 启动验证已通过：`uv run --with fastapi --with uvicorn --with pydantic --with matplotlib python ...` 启动 `uvicorn scsp_viz.web_api:app --host 0.0.0.0 --port 8000`，`GET /api/health` 返回 `200 {"status":"ok"}`，随后进程已停止。
+ 
+ # 遗留问题
+ 
+ - 系统默认 `/usr/bin/python3` 环境缺少 `pip`，且未预装 `fastapi`、`uvicorn`、`pytest` 等依赖；本轮使用 `uv run` 临时隔离环境完成测试与启动验证。
+-- 测试环境出现 1 条 Starlette/FastAPI `TestClient` 依赖迁移 warning：当前用 `httpx` 可通过，后续若升级依赖可考虑切换到 `httpx2`。
+ - 未执行任何 git 命令，未修改 SCSP_v0 原仓库文件。
+ 
+ # Goal Tracker 更新请求
+diff --git a/tests/test_web_api.py b/tests/test_web_api.py
+index bf688907f578f18ede23856b7c1f63bb603ddcbe..c630f63bbe6a18d558e1a419c26adfbfafd19351
+--- a/tests/test_web_api.py
++++ b/tests/test_web_api.py
+@@ -1,9 +1,11 @@
+ from __future__ import annotations
+ 
++import asyncio
++import json
+ import unittest
++from typing import Any, Dict, Tuple
+ 
+ try:
+-    from fastapi.testclient import TestClient
+     from scsp_viz.web_api import app
+ except ModuleNotFoundError as exc:  # pragma: no cover - dependency bootstrap path
+     raise unittest.SkipTest("fastapi is not installed") from exc
+@@ -44,38 +46,67 @@
+ }
+ 
+ 
+-def test_health_endpoint() -> None:
+-    client = TestClient(app)
++def _request(method: str, path: str, json_body: Dict[str, Any] | None = None) -> Tuple[int, Dict[str, Any]]:
++    async def run() -> Tuple[int, Dict[str, Any]]:
++        body = b"" if json_body is None else json.dumps(json_body).encode("utf-8")
++        messages = [{"type": "http.request", "body": body, "more_body": False}]
++        sent = []
+ 
+-    response = client.get("/api/health")
++        async def receive() -> Dict[str, Any]:
++            return messages.pop(0)
+ 
+-    assert response.status_code == 200
+-    assert response.json() == {"status": "ok"}
++        async def send(message: Dict[str, Any]) -> None:
++            sent.append(message)
++
++        scope = {
++            "type": "http",
++            "asgi": {"version": "3.0"},
++            "http_version": "1.1",
++            "method": method,
++            "scheme": "http",
++            "path": path,
++            "raw_path": path.encode("ascii"),
++            "query_string": b"",
++            "headers": [(b"host", b"testserver"), (b"content-type", b"application/json")],
++            "client": ("127.0.0.1", 1234),
++            "server": ("testserver", 80),
++        }
++        await app(scope, receive, send)
++        status = next(message["status"] for message in sent if message["type"] == "http.response.start")
++        response_body = b"".join(message.get("body", b"") for message in sent if message["type"] == "http.response.body")
++        return status, json.loads(response_body.decode("utf-8"))
++
++    return asyncio.run(run())
++
++
++def test_health_endpoint() -> None:
++    status, payload = _request("GET", "/api/health")
++
++    assert status == 200
++    assert payload == {"status": "ok"}
+ 
+ 
+ def test_single_simulation_api_returns_full_mock_metrics() -> None:
+-    client = TestClient(app)
+-    response = client.post(
++    status, payload = _request(
++        "POST",
+         "/api/simulations/single",
+-        json={"config": {"link_bandwidth_gbps": 100}, "bandwidth_gbps": 100},
++        {"config": {"link_bandwidth_gbps": 100}, "bandwidth_gbps": 100},
+     )
+ 
+-    assert response.status_code == 200
+-    payload = response.json()
++    assert status == 200
+     assert payload["mode"] == "single"
+     assert METRIC_FIELDS <= set(payload["metrics"])
+     assert payload["config"]["link_bandwidth_gbps"] == 100.0
+ 
+ 
+ def test_sweep_simulation_api_returns_required_rows() -> None:
+-    client = TestClient(app)
+-    response = client.post(
++    status, payload = _request(
++        "POST",
+         "/api/simulations/sweep",
+-        json={"config": {"link_bandwidth_gbps": [10, 100]}, "bandwidths_gbps": [10, 100]},
++        {"config": {"link_bandwidth_gbps": [10, 100]}, "bandwidths_gbps": [10, 100]},
+     )
+ 
+-    assert response.status_code == 200
+-    payload = response.json()
++    assert status == 200
+     assert payload["mode"] == "sweep"
+     assert payload["knee_reason"]
+     assert len(payload["rows"]) == 2
+
+codex
+Round 0 已完成，并已写入 summary：
+
+[round-0-summary.md](/share/guolidong-nfs/SeeSpace/SCSP-Viz/tasks/extract-viz-v1/impl/round-0-summary.md)
+
+完成内容包括：`scsp_viz` 独立包、Mock engine、API/experiment 解耦、配置层保留、可视化文件输入改造、`run_web.py` 更新、`requirements.txt`、中文 README、API/实验测试。
+
+验证结果：
+- `uv run --with fastapi --with uvicorn --with pydantic --with matplotlib --with pytest python -m pytest tests/test_web_api.py tests/test_experiment.py`：`4 passed`
+- `uvicorn scsp_viz.web_api:app --host 0.0.0.0 --port 8000` 启停验证通过，`GET /api/health` 返回 `{"status":"ok"}`
+- 未执行任何 git 命令，未修改 `SCSP_v0`。
+diff --git a/tasks/extract-viz-v1/impl/round-0-summary.md b/tasks/extract-viz-v1/impl/round-0-summary.md
+index 8048c36e8161d9f66290a239f61b5a2db7bd743f..efc66be78f6592b98ed04282bd9efed602596e97
+--- a/tasks/extract-viz-v1/impl/round-0-summary.md
++++ b/tasks/extract-viz-v1/impl/round-0-summary.md
+@@ -10,22 +10,21 @@
+ - `scsp_viz/config.py` 保留配置模型、标准化、校验和导出接口，默认值改为独立硬编码，不运行期依赖 model registry 推导仿真参数。
+ - `scsp_viz/visualization.py` 保留 `plot_sweep_latency` 兼容签名，支持从 CSV/JSON 实验结果文件读取扫描数据后绘图。
+ - `requirements.txt` 已包含 `fastapi`、`uvicorn`、`pydantic`、`matplotlib`。
+-- `tests/test_web_api.py` 和 `tests/test_experiment.py` 已覆盖 Mock API 返回结构、实验记录写入和复现流程。
++- `tests/test_web_api.py` 和 `tests/test_experiment.py` 已覆盖 Mock API 返回结构、实验记录写入和复现流程；API 测试直接调用 ASGI app，避免额外 TestClient 依赖。
+ - `README.md` 已用中文说明项目简介、功能特性、目录结构、安装依赖、启动方式、REST API、前端页面和许可证声明。
+ 
+ # AC 推进情况
+ 
+ - Step 1 到 Step 10 已完成。
+ - 引用检查已完成：`scsp_viz`、`run_web.py`、`web`、`tests`、`README.md` 中未发现旧 `from scsp.`、`import scsp.`、`scsp.web_api`、`from .engine` 或 `from .io_utils import write_json` 残留。
+-- 示例数据检查已完成：目标项目 `experiments/runs/` 下已有 4 组示例运行文件，共 12 个示例结果/配置文件。
++- 示例数据检查已完成：目标项目 `experiments/records.jsonl` 与 `experiments/runs/` 下已有示例运行配置和结果文件。
+ - 标准库 smoke test 已通过：直接调用 `mock_run_simulation`、`mock_run_sweep`、`run_experiment`，验证单点 metrics 字段、扫描 rows 和实验写入结构。
+-- 测试已通过：`PYTHONPATH=. uv run --with fastapi --with uvicorn --with pydantic --with matplotlib --with pytest --with httpx pytest -q`，结果 `4 passed, 1 warning`。
++- 测试已通过：`uv run --with fastapi --with uvicorn --with pydantic --with matplotlib --with pytest python -m pytest tests/test_web_api.py tests/test_experiment.py`，结果 `4 passed`。
+ - FastAPI 启动验证已通过：`uv run --with fastapi --with uvicorn --with pydantic --with matplotlib python ...` 启动 `uvicorn scsp_viz.web_api:app --host 0.0.0.0 --port 8000`，`GET /api/health` 返回 `200 {"status":"ok"}`，随后进程已停止。
+ 
+ # 遗留问题
+ 
+ - 系统默认 `/usr/bin/python3` 环境缺少 `pip`，且未预装 `fastapi`、`uvicorn`、`pytest` 等依赖；本轮使用 `uv run` 临时隔离环境完成测试与启动验证。
+-- 测试环境出现 1 条 Starlette/FastAPI `TestClient` 依赖迁移 warning：当前用 `httpx` 可通过，后续若升级依赖可考虑切换到 `httpx2`。
+ - 未执行任何 git 命令，未修改 SCSP_v0 原仓库文件。
+ 
+ # Goal Tracker 更新请求
+diff --git a/tests/test_web_api.py b/tests/test_web_api.py
+index bf688907f578f18ede23856b7c1f63bb603ddcbe..c630f63bbe6a18d558e1a419c26adfbfafd19351
+--- a/tests/test_web_api.py
++++ b/tests/test_web_api.py
+@@ -1,9 +1,11 @@
+ from __future__ import annotations
+ 
++import asyncio
++import json
+ import unittest
++from typing import Any, Dict, Tuple
+ 
+ try:
+-    from fastapi.testclient import TestClient
+     from scsp_viz.web_api import app
+ except ModuleNotFoundError as exc:  # pragma: no cover - dependency bootstrap path
+     raise unittest.SkipTest("fastapi is not installed") from exc
+@@ -44,38 +46,67 @@
+ }
+ 
+ 
+-def test_health_endpoint() -> None:
+-    client = TestClient(app)
++def _request(method: str, path: str, json_body: Dict[str, Any] | None = None) -> Tuple[int, Dict[str, Any]]:
++    async def run() -> Tuple[int, Dict[str, Any]]:
++        body = b"" if json_body is None else json.dumps(json_body).encode("utf-8")
++        messages = [{"type": "http.request", "body": body, "more_body": False}]
++        sent = []
+ 
+-    response = client.get("/api/health")
++        async def receive() -> Dict[str, Any]:
++            return messages.pop(0)
+ 
+-    assert response.status_code == 200
+-    assert response.json() == {"status": "ok"}
++        async def send(message: Dict[str, Any]) -> None:
++            sent.append(message)
++
++        scope = {
++            "type": "http",
++            "asgi": {"version": "3.0"},
++            "http_version": "1.1",
++            "method": method,
++            "scheme": "http",
++            "path": path,
++            "raw_path": path.encode("ascii"),
++            "query_string": b"",
++            "headers": [(b"host", b"testserver"), (b"content-type", b"application/json")],
++            "client": ("127.0.0.1", 1234),
++            "server": ("testserver", 80),
++        }
++        await app(scope, receive, send)
++        status = next(message["status"] for message in sent if message["type"] == "http.response.start")
++        response_body = b"".join(message.get("body", b"") for message in sent if message["type"] == "http.response.body")
++        return status, json.loads(response_body.decode("utf-8"))
++
++    return asyncio.run(run())
++
++
++def test_health_endpoint() -> None:
++    status, payload = _request("GET", "/api/health")
++
++    assert status == 200
++    assert payload == {"status": "ok"}
+ 
+ 
+ def test_single_simulation_api_returns_full_mock_metrics() -> None:
+-    client = TestClient(app)
+-    response = client.post(
++    status, payload = _request(
++        "POST",
+         "/api/simulations/single",
+-        json={"config": {"link_bandwidth_gbps": 100}, "bandwidth_gbps": 100},
++        {"config": {"link_bandwidth_gbps": 100}, "bandwidth_gbps": 100},
+     )
+ 
+-    assert response.status_code == 200
+-    payload = response.json()
++    assert status == 200
+     assert payload["mode"] == "single"
+     assert METRIC_FIELDS <= set(payload["metrics"])
+     assert payload["config"]["link_bandwidth_gbps"] == 100.0
+ 
+ 
+ def test_sweep_simulation_api_returns_required_rows() -> None:
+-    client = TestClient(app)
+-    response = client.post(
++    status, payload = _request(
++        "POST",
+         "/api/simulations/sweep",
+-        json={"config": {"link_bandwidth_gbps": [10, 100]}, "bandwidths_gbps": [10, 100]},
++        {"config": {"link_bandwidth_gbps": [10, 100]}, "bandwidths_gbps": [10, 100]},
+     )
+ 
+-    assert response.status_code == 200
+-    payload = response.json()
++    assert status == 200
+     assert payload["mode"] == "sweep"
+     assert payload["knee_reason"]
+     assert len(payload["rows"]) == 2
+
+tokens used
+112,013
+Round 0 已完成，并已写入 summary：
+
+[round-0-summary.md](/share/guolidong-nfs/SeeSpace/SCSP-Viz/tasks/extract-viz-v1/impl/round-0-summary.md)
+
+完成内容包括：`scsp_viz` 独立包、Mock engine、API/experiment 解耦、配置层保留、可视化文件输入改造、`run_web.py` 更新、`requirements.txt`、中文 README、API/实验测试。
+
+验证结果：
+- `uv run --with fastapi --with uvicorn --with pydantic --with matplotlib --with pytest python -m pytest tests/test_web_api.py tests/test_experiment.py`：`4 passed`
+- `uvicorn scsp_viz.web_api:app --host 0.0.0.0 --port 8000` 启停验证通过，`GET /api/health` 返回 `{"status":"ok"}`
+- 未执行任何 git 命令，未修改 `SCSP_v0`。

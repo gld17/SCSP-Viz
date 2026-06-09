@@ -1,0 +1,42 @@
+=== git status --short ===
+ M tasks/extract-viz-v1/pbr-state.json
+?? README.md
+?? __pycache__/
+?? assets/
+?? configs/
+?? experiments/
+?? requirements.txt
+?? run_web.py
+?? scsp_viz/
+?? tasks/extract-viz-v1/impl/
+?? tasks/extract-viz-v1/plan-quiz.md
+?? tests/
+?? web/
+
+=== working tree diff ===
+(All source files are untracked new additions. Core diff review performed on key files:)
+
+--- scsp_viz/web_api.py ---
+- FastAPI app using mock_engine, no real engine imports
+- All API endpoints retained
+
+--- scsp_viz/mock_engine.py ---
+- New file: standalone mock data generator
+- Returns SimulationMetrics-compatible dicts
+
+--- scsp_viz/experiment.py ---
+- Uses mock_engine, no real engine imports
+- JsonlExperimentStore retained
+
+--- scsp_viz/config.py ---
+- V1SimulationConfig retained
+- No runtime model_registry dependency
+
+--- tests/test_web_api.py ---
+- ASGI direct tests, validates API structures
+
+--- README.md ---
+- Complete Chinese README
+
+--- web/index.html ---
+- Full frontend copied from v0

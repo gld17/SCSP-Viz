@@ -1,0 +1,29 @@
+{
+  "model_name": "Qwen2.5-VL-72B",
+  "image_type": "RGB",
+  "image_resolution": "300000x300000",
+  "tile_size": "512x512",
+  "link_bandwidth_gbps": [
+    10,
+    50,
+    100,
+    200,
+    400
+  ],
+  "inter_stage_transfer_mb": 5.24288,
+  "flops_per_sample": 50000000000000,
+  "peak_vram_gb": 120,
+  "num_images": 1,
+  "big_star_peak_pflops": 2,
+  "single_star_compute_utilization": 0.5,
+  "inter_sat_latency_target_ms": 1,
+  "peak_power_limit_kw": 10,
+  "stage_split_ratio": 0.5,
+  "fixed_sync_overhead_ms": 5,
+  "inter_sat_distance_km": 10,
+  "remote_sat_altitude_km": 535,
+  "compute_sat_altitude_km": 500,
+  "compute_sat_count": 2,
+  "formation_mode": "紧密编队（间距 10 km）",
+  "link_mode": "同轨稳定链路（激光）"
+}
