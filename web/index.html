@@ -317,18 +317,9 @@
       }
       .summary-block .t { font-size: 12px; color: #8ec6ff; margin-bottom: 4px; }
       .summary-block .v { font-size: 12px; color: #dceaff; line-height: 1.5; }
-      .tabs { display: flex; gap: 6px; margin-bottom: 8px; flex-wrap: wrap; }
-      .tab {
-        font-size: 12px; border-radius: 999px; padding: 4px 9px;
-        border: 1px solid rgba(104, 149, 217, 0.25); color: #99bbe7;
-        cursor: pointer;
-      }
-      .tab.active { background: rgba(46, 99, 197, 0.42); color: #edf4ff; }
-      .perf-panel { display: none; }
-      .perf-panel.active { display: block; }
       .overview-row2 {
         display: grid;
-        grid-template-columns: minmax(280px, 0.32fr) minmax(0, 1fr);
+        grid-template-columns: minmax(0, 1fr);
         gap: 22px;
         margin-top: 22px;
         align-items: stretch;
@@ -347,43 +338,12 @@
         min-height: 0;
         overflow-y: auto;
       }
-      .overview-row2 > .card > .tabs { flex-shrink: 0; }
-      .overview-row2 > .card > .perf-panel {
-        flex: 1;
-        min-height: 0;
-        overflow: auto;
-      }
-      .overview-row2 > .card > .perf-panel .donut-wrap {
-        min-height: 200px;
-      }
-      .overview-row2 > .card > .perf-panel .chart.chart--perf {
-        width: 100%;
-        max-width: 100%;
-        height: auto;
-        display: block;
-        aspect-ratio: 1100 / 420;
-      }
       .card--taskflow {
         display: flex;
         flex-direction: column;
         min-width: 0;
       }
       .card--taskflow .flow-stack { flex: 1; }
-      .donut-wrap { display: grid; grid-template-columns: 200px 1fr; gap: 8px; align-items: center; }
-      .donut { width: 180px; height: 180px; position: relative; margin: 0 auto; }
-      .donut svg { transform: rotate(-90deg); }
-      .donut-center {
-        position: absolute; inset: 0; display: flex; flex-direction: column;
-        align-items: center; justify-content: center;
-      }
-      .donut .donut-center { display: none !important; }
-      .donut-center .big { font-size: 27px; font-weight: 700; }
-      .donut-center .sub { font-size: 12px; color: var(--txt-dim); }
-      .legend-item {
-        display: grid; grid-template-columns: 1fr auto; gap: 8px; margin-bottom: 6px;
-        color: var(--txt-dim); font-size: 12px;
-      }
-      .legend-item b { color: #ebf3ff; font-weight: 600; }
       .chart {
         width: 100%;
         height: 250px;
@@ -826,18 +786,6 @@
       .main.main--overview #page-overview .kpi-sub { font-size: 14px; }
       .main.main--overview #page-overview .summary-block .t { font-size: 14px; }
       .main.main--overview #page-overview .summary-block .v { font-size: 14px; }
-      .main.main--overview #page-overview .tab { font-size: 14px; padding: 6px 12px; }
-      .main.main--overview #page-overview .legend-item { font-size: 14px; }
-      .main.main--overview #page-overview .donut-center .big { font-size: 31px; }
-      .main.main--overview #page-overview .donut-center .sub { font-size: 14px; }
-      .main.main--overview #page-overview .overview-row2 > .card > .perf-panel .donut-wrap {
-        min-height: 230px;
-      }
-      .main.main--overview #page-overview .overview-row2 .donut {
-        transform: scale(1.14);
-        transform-origin: center center;
-      }
-
       @media (max-width: 1500px) {
         .app { grid-template-columns: 1fr; }
         .sidebar { position: static; height: auto; }
@@ -962,26 +910,6 @@
             <div class="card">
               <h3>实验配置概览</h3>
               <div id="configSummary"></div>
-            </div>
-            <div class="card">
-              <h3>性能分析</h3>
-              <div class="tabs">
-                <span class="tab active" data-perf-tab="decompose">时延分解</span>
-                <span class="tab" data-perf-tab="bandwidth">星间互联带宽敏感性分析</span>
-                <span class="tab" data-perf-tab="compute">算力敏感性分析</span>
-              </div>
-              <div class="perf-panel active" id="perf-panel-decompose">
-                <div class="donut-wrap">
-                  <div class="donut" id="donut"></div>
-                  <div id="delayLegend"></div>
-                </div>
-              </div>
-              <div class="perf-panel" id="perf-panel-bandwidth">
-                <canvas class="chart chart--perf" id="bwSensitivityChart" width="1100" height="420"></canvas>
-              </div>
-              <div class="perf-panel" id="perf-panel-compute">
-                <canvas class="chart chart--perf" id="computeSensitivityChart" width="1100" height="420"></canvas>
-              </div>
             </div>
           </section>
         </section>
@@ -2037,76 +1965,6 @@
         byId("kpiDecodeBottleneck").textContent = decodeBottleneck;
         byId("kpiDecodePflops").textContent = Number.isFinite(decodeEffectivePflops) ? `${decodeEffectivePflops.toFixed(3)}` : "—";
         byId("kpiDecodeEnergyEfficiency").textContent = Number.isFinite(decodeEnergyEfficiency) ? `${decodeEnergyEfficiency.toFixed(3)}` : "—";
-      }
-
-      function renderDonut() {
-        if (!byId("donut") || !byId("delayLegend")) return;
-        if (!state.overviewResultsDisplayed) {
-          const radius = 68;
-          byId("donut").innerHTML = `
-            <svg width="180" height="180" viewBox="0 0 180 180">
-              <circle cx="90" cy="90" r="${radius}" fill="none" stroke="#17345f" stroke-width="20" />
-            </svg>
-          `;
-          byId("delayLegend").innerHTML = "";
-          return;
-        }
-        const cfg = state.config || {};
-        const bw = Math.max(1, Number(cfg.link_bandwidth_gbps_single || 400));
-        const distanceKm = Math.max(0, Number(cfg.inter_sat_distance_km || 10));
-        const flops = Math.max(0, Number(cfg.flops_per_sample || 0));
-        const peakPflops = Math.max(1e-9, Number(cfg.big_star_peak_pflops_single || cfg.big_star_peak_pflops || 10.0));
-        const memoryBwBytesPerSec = Math.max(1e-9, Number(cfg.single_node_memory_bandwidth_bytes_per_sec || 2.0e13));
-        const prefillMemoryBytes = Math.max(0, Number(cfg.prefill_memory_bytes_per_patch || 5.0e10));
-        const imageType = String(cfg.image_type || "RGB").toUpperCase();
-        const channels = imageType === "SAR" ? 1 : 3;
-        const bytesPerPixel = imageType === "SAR" ? 4 : 2;
-        const tileText = String(cfg.tile_size || "512x512").toLowerCase();
-        const [tileW, tileH] = tileText.split("x").map((n) => Number(n.trim()));
-        if (!Number.isFinite(tileW) || !Number.isFinite(tileH) || tileW <= 0 || tileH <= 0) {
-          byId("donut").innerHTML = "";
-          byId("delayLegend").innerHTML = "";
-          return;
-        }
-        const tileMb = (tileW * tileH * channels * bytesPerPixel) / 1_000_000;
-        const transfer = (dataMb) => {
-          const serialization = (dataMb * 8.0) / (bw * 1000.0);
-          const propagation = (distanceKm * 1000.0) / 299792458.0;
-          return serialization + propagation;
-        };
-        const txRemoteToCompute = transfer(tileMb);
-        const txComputeToCompute = transfer(Number(cfg.prefill_inter_stage_transfer_mb || 0));
-        const effectiveStarFlops = peakPflops * 1e15;
-        const computeLatency = (flops / effectiveStarFlops);
-        const memoryLatency = prefillMemoryBytes / memoryBwBytesPerSec;
-        const prefillLatency = Math.max(computeLatency, memoryLatency);
-        const seg = [
-          { k: "遥感星-计算星传输", v: txRemoteToCompute, c: "#57a6ff" },
-          { k: "计算星-计算星传输", v: txComputeToCompute, c: "#7f76ff" },
-          { k: "计算星 Prefill 时延", v: prefillLatency, c: "#3fd389" }
-        ];
-        const total = seg.reduce((s, i) => s + i.v, 0.00001);
-        const radius = 68;
-        const per = 2 * Math.PI * radius;
-        let acc = 0;
-        let circles = "";
-        seg.forEach((s) => {
-          const ratio = s.v / total;
-          circles += `<circle cx="90" cy="90" r="${radius}" fill="none" stroke="${s.c}" stroke-width="20" stroke-dasharray="${(ratio * per).toFixed(3)} ${(per - ratio * per).toFixed(3)}" stroke-dashoffset="${(-acc * per).toFixed(3)}" />`;
-          acc += ratio;
-        });
-        byId("donut").innerHTML = `
-          <svg width="180" height="180" viewBox="0 0 180 180">
-            <circle cx="90" cy="90" r="${radius}" fill="none" stroke="#17345f" stroke-width="20" />
-            ${circles}
-          </svg>
-        `;
-        byId("delayLegend").innerHTML = seg.map((s) => `
-          <div class="legend-item">
-            <div><span class="dot" style="background:${s.c}; margin-left:0;"></span>${s.k}</div>
-            <b>${(s.v / total * 100).toFixed(1)}%</b>
-          </div>
-        `).join("");
       }
 
       function _log10(x) {
@@ -3350,11 +3208,6 @@
         renderConfigSummary();
         renderConstellationSummary();
         renderKpi();
-        renderDonut();
-        const bwRows = getBandwidthSensitivityRows();
-        const cpRows = getComputeSensitivityRows();
-        drawLineChart("bwSensitivityChart", bwRows, "link_bandwidth_gbps", "total_latency_s", "任务总时延 (s)", state.config.link_bandwidth_gbps_single);
-        drawLineChart("computeSensitivityChart", cpRows, "single_star_pflops", "total_latency_s", "任务总时延 (s)", state.config.big_star_peak_pflops_single);
         if (byId("page-experiment-design")?.classList.contains("active")) renderExperimentDesign();
         if (byId("page-experiment-results")?.classList.contains("active")) renderExperimentResults();
       }
@@ -3371,7 +3224,7 @@
             state.config.link_bandwidth_gbps_single,
             state.config.big_star_peak_pflops_single
           );
-          /* 单点仿真成功时也要展示概览 KPI/圆环；此前仅「敏感性扫描」会置 true，导致单点跑完界面仍像无结果 */
+          /* 单点仿真成功时也要展示概览 KPI；此前仅「敏感性扫描」会置 true，导致单点跑完界面仍像无结果 */
           if (state.kpiOverviewRow) {
             state.overviewResultsDisplayed = true;
           }
@@ -3389,24 +3242,6 @@
         a.download = filename;
         a.click();
         URL.revokeObjectURL(a.href);
-      }
-
-      function bindPerformanceTabs() {
-        const tabs = Array.from(document.querySelectorAll("[data-perf-tab]"));
-        const panels = {
-          decompose: byId("perf-panel-decompose"),
-          bandwidth: byId("perf-panel-bandwidth"),
-          compute: byId("perf-panel-compute")
-        };
-        tabs.forEach((tab) => {
-          tab.addEventListener("click", () => {
-            const key = tab.dataset.perfTab;
-            tabs.forEach((t) => t.classList.toggle("active", t === tab));
-            Object.entries(panels).forEach(([k, el]) => el.classList.toggle("active", k === key));
-            // 切换到可见面板后按当前尺寸重绘，避免隐藏状态下绘制造成清晰度不一致。
-            renderAll();
-          });
-        });
       }
 
       function buildConfigForSimulation(extra) {
@@ -3603,7 +3438,6 @@
         applyRegistryModel(state.config.model_name);
         bindNavigation();
         syncMainOverviewMode();
-        bindPerformanceTabs();
         renderConfigInputs();
         bindConfigInputs();
         bindExperimentModule();
