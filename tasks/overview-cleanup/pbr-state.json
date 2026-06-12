@@ -19,7 +19,7 @@
   "impl_alignment_checked": true,
   "impl_loop_complete": true,
   "review_round": 0,
-  "review_loop_started": false,
+  "review_loop_started": true,
   "review_diff_captured": false,
   "review_result_written": false,
   "review_fix_summary_written": false,
@@ -30,5 +30,5 @@
   "settlement_done": false,
   "last_completed_step": "",
   "blocked_reason": "",
-  "updated_at": "2026-06-12T15:09:41"
+  "updated_at": "2026-06-12T15:10:14"
 }
