@@ -1,0 +1,26 @@
+diff --git a/README.md b/README.md
+index e2b9229..c1c61e7 100644
+--- a/README.md
++++ b/README.md
+@@ -59,7 +59,7 @@ By default, the service listens on `0.0.0.0:8000`. Open `http://localhost:8000/`
+ 
+ ## API Description
+ 
+-SCSP-Viz exposes visualization-layer interfaces according to the standardized REST API interaction specification of the SCSP simulation platform. Input fields retain the `config` dictionary format, and output structures retain the standard forms for single-point simulation, sweeps, and experiment records. In the current version, all computation results come from the Mock data layer.
++SCSP-Viz exposes visualization-layer interfaces according to the standardized REST API interaction specification of the SCSP-Viz. Input fields retain the `config` dictionary format, and output structures retain the standard forms for single-point simulation, sweeps, and experiment records. In the current version, all computation results come from the Mock data layer.
+ 
+ - `GET /api/health`: Health check, returns `{"status": "ok"}`.
+ - `POST /api/simulations/single`: Single-point simulation Mock. The request body contains `config` and optional `bandwidth_gbps`, and returns `mode=config=metrics`.
+diff --git a/web/index.html b/web/index.html
+index 7637f5c..8a977b4 100644
+--- a/web/index.html
++++ b/web/index.html
+@@ -813,7 +813,7 @@
+             <div class="brand-logo"></div>
+             <div>
+               <p class="name-cn">SCSP-Viz</p>
+-              <div class="sub">Spaceborne Computing Simulation<br/>Platform（天基计算仿真平台）</div>
++              <div class="sub">SCSP-Viz</div>
+             </div>
+           </div>
+         </div>

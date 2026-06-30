@@ -59,7 +59,7 @@ By default, the service listens on `0.0.0.0:8000`. Open `http://localhost:8000/`
 
 ## API Description
 
-SCSP-Viz exposes visualization-layer interfaces according to the standardized REST API interaction specification of the SCSP simulation platform. Input fields retain the `config` dictionary format, and output structures retain the standard forms for single-point simulation, sweeps, and experiment records. In the current version, all computation results come from the Mock data layer.
+SCSP-Viz exposes visualization-layer interfaces according to the standardized REST API interaction specification of the SCSP-Viz. Input fields retain the `config` dictionary format, and output structures retain the standard forms for single-point simulation, sweeps, and experiment records. In the current version, all computation results come from the Mock data layer.
 
 - `GET /api/health`: Health check, returns `{"status": "ok"}`.
 - `POST /api/simulations/single`: Single-point simulation Mock. The request body contains `config` and optional `bandwidth_gbps`, and returns `mode=config=metrics`.
